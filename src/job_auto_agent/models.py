@@ -24,6 +24,7 @@ class JobOpportunity:
     url: str | None
     description: str
     received_at: datetime | None
+    source: str | None = None
 
 
 @dataclass(frozen=True)

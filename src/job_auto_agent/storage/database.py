@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS job_opportunities (
     company TEXT,
     title TEXT NOT NULL,
     location TEXT,
+    source TEXT NOT NULL DEFAULT 'Gmail',
+    status TEXT NOT NULL DEFAULT 'New',
     url TEXT,
     description TEXT NOT NULL,
     received_at TEXT,
@@ -38,6 +40,11 @@ CREATE TABLE IF NOT EXISTS match_scores (
 );
 """
 
+JOB_OPPORTUNITY_COLUMNS = {
+    "source": "ALTER TABLE job_opportunities ADD COLUMN source TEXT NOT NULL DEFAULT 'Gmail'",
+    "status": "ALTER TABLE job_opportunities ADD COLUMN status TEXT NOT NULL DEFAULT 'New'",
+}
+
 
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,3 +56,14 @@ def connect(db_path: Path) -> sqlite3.Connection:
 def init_db(db_path: Path) -> None:
     with connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        _ensure_job_opportunity_columns(conn)
+
+
+def _ensure_job_opportunity_columns(conn: sqlite3.Connection) -> None:
+    existing_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(job_opportunities)").fetchall()
+    }
+    for column_name, statement in JOB_OPPORTUNITY_COLUMNS.items():
+        if column_name not in existing_columns:
+            conn.execute(statement)
