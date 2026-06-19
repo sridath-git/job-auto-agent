@@ -49,18 +49,111 @@ Required OAuth scope:
 https://www.googleapis.com/auth/gmail.readonly
 ```
 
-5. Initialize the database and sync Gmail.
+5. Validate the local setup.
+
+```bash
+job-auto-agent validate-setup
+```
+
+6. Initialize the database and sync Gmail.
 
 ```bash
 job-auto-agent init-db
 job-auto-agent sync-gmail
 ```
 
-6. Run the dashboard.
+7. Run the dashboard.
 
 ```bash
 streamlit run dashboard/app.py
 ```
+
+## Gmail OAuth Setup
+
+The app uses Google OAuth for installed desktop apps and requests read-only Gmail access. It never needs your Gmail password and it does not request send, modify, or delete permissions.
+
+### 1. Create or Select a Google Cloud Project
+
+1. Open the Google Cloud Console.
+2. Create a new project, or select an existing project dedicated to this assistant.
+3. Confirm the selected project in the top navigation before enabling APIs or creating credentials.
+
+### 2. Enable the Gmail API
+
+1. Go to **APIs & Services** > **Library**.
+2. Search for **Gmail API**.
+3. Open the Gmail API result and click **Enable**.
+
+### 3. Configure the OAuth Consent Screen
+
+1. Go to **APIs & Services** > **OAuth consent screen**.
+2. Choose **External** unless you are using a Google Workspace internal app.
+3. Fill in the required app name, user support email, and developer contact email.
+4. Add yourself as a test user while the app is in testing mode.
+5. Add this scope:
+
+```text
+https://www.googleapis.com/auth/gmail.readonly
+```
+
+Testing mode is fine for local personal use. If Google shows an unverified-app warning during login, continue only if the project and OAuth client are yours.
+
+### 4. Create OAuth Credentials
+
+1. Go to **APIs & Services** > **Credentials**.
+2. Click **Create credentials** > **OAuth client ID**.
+3. Select **Desktop app** as the application type.
+4. Name it something like `Job Auto Agent Local`.
+5. Download the JSON file.
+6. Rename it to `credentials.json`.
+7. Place it in the repository root, next to `README.md`.
+
+The credentials file must look like a desktop client file and contain a top-level `installed` section. Do not use a web application client for this app.
+
+### 5. Configure Environment Variables
+
+Copy the example environment file:
+
+```bash
+cp .env.example .env
+```
+
+The defaults expect these local files:
+
+```text
+GMAIL_CREDENTIALS_FILE=credentials.json
+GMAIL_TOKEN_FILE=token.json
+```
+
+`credentials.json` is downloaded from Google Cloud. `token.json` is generated locally after your first successful OAuth login.
+
+### 6. Validate Before Login
+
+Run:
+
+```bash
+job-auto-agent validate-setup
+```
+
+This command checks the database URL, Gmail query, OAuth credentials file shape, and token file status. It does not open a browser and it does not perform Gmail OAuth.
+
+### 7. Complete First Gmail Login
+
+Run:
+
+```bash
+job-auto-agent sync-gmail --limit 10
+```
+
+On the first run, a browser window opens for Google login and consent. After consent succeeds, the app writes `token.json` locally. Later runs reuse that token and refresh it when possible.
+
+### Troubleshooting
+
+- `Missing credentials.json`: confirm the downloaded OAuth client JSON is in the repository root or update `GMAIL_CREDENTIALS_FILE`.
+- `Expected Google OAuth client JSON with an installed section`: recreate the OAuth client as **Desktop app**, not **Web application**.
+- `Access blocked` or `user not added as a test user`: add your Gmail address under OAuth consent screen test users.
+- `Token missing required scope`: delete `token.json`, confirm the readonly Gmail scope is configured, and run `sync-gmail` again.
+- `DATABASE_URL` errors: use a `sqlite:///...` URL. Other database engines are not supported yet.
 
 ## Configuration
 
@@ -78,6 +171,7 @@ Environment variables are documented in `.env.example`.
 job-auto-agent init-db
 job-auto-agent sync-gmail --limit 25
 job-auto-agent score-jobs
+job-auto-agent validate-setup
 ```
 
 ## Project Structure
