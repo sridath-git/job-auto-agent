@@ -172,18 +172,85 @@ job-auto-agent init-db
 job-auto-agent sync-gmail --limit 25
 job-auto-agent score-jobs
 job-auto-agent validate-setup
+job-auto-agent tailor-resume --job-id 123
 ```
+
+## Manual Resume Tailoring
+
+The app can generate a local Markdown resume draft for a selected job. This is a manual review tool only. It does not auto-apply, send emails, upload resumes, or claim skills that are not present in your master resume.
+
+### Master Resume Setup
+
+1. Review the example file:
+
+```bash
+data/profile/master_resume.example.md
+```
+
+2. Create your real master resume here:
+
+```bash
+data/profile/master_resume.md
+```
+
+The real `master_resume.md` file is ignored by Git and should never be committed.
+
+Optional profile metadata lives here:
+
+```bash
+data/profile/profile.example.json
+```
+
+### CLI Usage
+
+Generate a tailored resume draft for a saved job:
+
+```bash
+job-auto-agent tailor-resume --job-id 123
+```
+
+The output is saved locally:
+
+```text
+data/generated_resumes/job_123_tailored_resume.md
+```
+
+Generated resumes are ignored by Git. If a generated resume already exists, the command will not overwrite it unless you explicitly pass:
+
+```bash
+job-auto-agent tailor-resume --job-id 123 --overwrite
+```
+
+The generated draft:
+
+- Extracts important job keywords.
+- Compares job keywords with the master resume.
+- Reorders and emphasizes existing relevant resume lines.
+- Suggests missing job keywords separately.
+- Does not claim missing skills as experience.
+
+### Dashboard Usage
+
+In the Streamlit dashboard:
+
+1. Find the job you want to tailor for.
+2. Note the displayed job ID.
+3. Click **Generate Tailored Resume**.
+4. If a generated resume already exists, check **Overwrite existing generated resume** before regenerating.
+5. Review the generated Markdown file manually before using it.
 
 ## Project Structure
 
 ```text
 dashboard/                  Streamlit UI
+data/profile/               Local profile examples and ignored real master resume
 src/job_auto_agent/
   cli.py                    Command-line entrypoint
   config.py                 Environment-driven settings
   gmail/                    Gmail OAuth and message fetchers
   extraction/               Job extraction pipeline
   matching/                 DevSecOps/AppSec/PKI scoring
+  resume/                   Manual resume tailoring
   storage/                  SQLite schema and repository
 tests/                      Focused unit tests
 ```

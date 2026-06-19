@@ -5,6 +5,11 @@ import json
 import streamlit as st
 
 from job_auto_agent.config import get_settings
+from job_auto_agent.resume.tailor import (
+    DEFAULT_OUTPUT_DIR,
+    ResumeTailoringError,
+    tailor_resume_for_job,
+)
 from job_auto_agent.storage.database import connect, init_db
 from job_auto_agent.storage.repository import JOB_STATUSES, list_jobs, update_job_status
 
@@ -75,6 +80,7 @@ for job in filtered:
         st.progress(score / 100)
         st.write(
             {
+                "job_id": job["id"],
                 "company": job["company"],
                 "source": job["source"],
                 "location": job["location"],
@@ -89,5 +95,26 @@ for job in filtered:
             st.markdown(f"**Matched terms:** {terms}")
         if job["notes"]:
             st.markdown(f"**Notes:** {job['notes']}")
+        output_path = DEFAULT_OUTPUT_DIR / f"job_{job['id']}_tailored_resume.md"
+        overwrite_key = f"overwrite-resume-{job['id']}"
+        overwrite = False
+        if output_path.exists():
+            st.info(f"Tailored resume already exists: `{output_path}`")
+            overwrite = st.checkbox(
+                "Overwrite existing generated resume",
+                key=overwrite_key,
+            )
+        if st.button("Generate Tailored Resume", key=f"tailor-resume-{job['id']}"):
+            try:
+                with connect(settings.sqlite_path) as conn:
+                    result = tailor_resume_for_job(conn, job["id"], overwrite=overwrite)
+                st.success(f"Generated tailored resume: `{result.output_path}`")
+                if result.missing_keywords:
+                    st.warning(
+                        "Missing keywords to review manually: "
+                        + ", ".join(result.missing_keywords)
+                    )
+            except ResumeTailoringError as exc:
+                st.error(str(exc))
         with st.expander("Email excerpt"):
             st.write(job["description"])
