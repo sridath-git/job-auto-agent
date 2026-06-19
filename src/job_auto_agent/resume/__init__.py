@@ -1,0 +1,1 @@
+"""Manual resume tailoring package."""

@@ -1,0 +1,39 @@
+{
+  "name": "Sridath Jeelugula",
+  "location": "Montreal, Quebec, Canada",
+  "target_roles": [
+    "Site Reliability Engineer",
+    "DevOps Engineer",
+    "Platform Engineer",
+    "Cloud Engineer",
+    "DevSecOps Engineer",
+    "Cloud Security Engineer",
+    "Application Security Engineer",
+    "PKI Engineer",
+    "Vault Engineer",
+    "Identity Engineer"
+  ],
+  "primary_skills": [
+    "Kubernetes",
+    "AKS",
+    "EKS",
+    "OpenShift",
+    "Terraform",
+    "Ansible",
+    "Jenkins",
+    "GitHub Actions",
+    "Azure DevOps",
+    "HashiCorp Vault",
+    "PKI",
+    "Certificate Management",
+    "DevSecOps",
+    "Application Security"
+  ],
+  "safety_rules": [
+    "Do not invent experience",
+    "Do not claim skills absent from the master resume",
+    "Do not auto-apply",
+    "Do not send emails",
+    "Do not upload resumes"
+  ]
+}

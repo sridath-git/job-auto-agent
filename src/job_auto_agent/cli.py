@@ -6,6 +6,7 @@ from job_auto_agent.config import get_settings
 from job_auto_agent.extraction.pipeline import extract_job
 from job_auto_agent.gmail.client import GmailClient
 from job_auto_agent.matching.engine import score_job
+from job_auto_agent.resume.tailor import ResumeTailoringError, tailor_resume_for_job
 from job_auto_agent.storage.database import connect, init_db
 from job_auto_agent.storage.repository import list_jobs, save_email, save_job, save_match
 from job_auto_agent.validation import validate_setup
@@ -22,6 +23,17 @@ def main() -> None:
 
     subparsers.add_parser("score-jobs", help="Score stored job opportunities.")
     subparsers.add_parser("validate-setup", help="Validate local config before Gmail sync.")
+
+    tailor_parser = subparsers.add_parser(
+        "tailor-resume",
+        help="Generate a manual tailored resume draft for a saved job.",
+    )
+    tailor_parser.add_argument("--job-id", type=int, required=True)
+    tailor_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace an existing generated resume for this job.",
+    )
 
     args = parser.parse_args()
     settings = get_settings()
@@ -62,3 +74,18 @@ def main() -> None:
         failures = [check for check in checks if not check.ok]
         if failures:
             raise SystemExit(1)
+        return
+
+    if args.command == "tailor-resume":
+        init_db(settings.sqlite_path)
+        with connect(settings.sqlite_path) as conn:
+            try:
+                result = tailor_resume_for_job(conn, args.job_id, overwrite=args.overwrite)
+            except ResumeTailoringError as exc:
+                print(f"Unable to tailor resume: {exc}")
+                raise SystemExit(1) from exc
+        print(f"Generated tailored resume: {result.output_path}")
+        if result.missing_keywords:
+            print("Missing keywords to review manually:")
+            for keyword in result.missing_keywords:
+                print(f"- {keyword}")
