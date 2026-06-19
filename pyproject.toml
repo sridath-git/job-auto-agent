@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "job-auto-agent"
+version = "0.1.0"
+description = "Gmail-based job application assistant for security engineering roles."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4>=4.12.3",
+    "google-api-python-client>=2.137.0",
+    "google-auth>=2.32.0",
+    "google-auth-oauthlib>=1.2.1",
+    "pydantic>=2.8.2",
+    "python-dotenv>=1.0.1",
+    "streamlit>=1.37.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.2",
+    "ruff>=0.5.5",
+]
+
+[project.scripts]
+job-auto-agent = "job_auto_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
