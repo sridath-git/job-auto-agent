@@ -8,6 +8,7 @@ from job_auto_agent.gmail.client import GmailClient
 from job_auto_agent.matching.engine import score_job
 from job_auto_agent.storage.database import connect, init_db
 from job_auto_agent.storage.repository import list_jobs, save_email, save_job, save_match
+from job_auto_agent.validation import validate_setup
 
 
 def main() -> None:
@@ -20,6 +21,7 @@ def main() -> None:
     sync_parser.add_argument("--limit", type=int, default=50)
 
     subparsers.add_parser("score-jobs", help="Score stored job opportunities.")
+    subparsers.add_parser("validate-setup", help="Validate local config before Gmail sync.")
 
     args = parser.parse_args()
     settings = get_settings()
@@ -50,3 +52,13 @@ def main() -> None:
                 result = score_job(job["id"], job["title"], job["description"])
                 save_match(conn, result)
         print(f"Scored {len(jobs)} job opportunities.")
+        return
+
+    if args.command == "validate-setup":
+        checks = validate_setup(settings)
+        for check in checks:
+            status = "OK" if check.ok else "FAIL"
+            print(f"[{status}] {check.name}: {check.message}")
+        failures = [check for check in checks if not check.ok]
+        if failures:
+            raise SystemExit(1)
