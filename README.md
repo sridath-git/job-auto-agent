@@ -17,16 +17,21 @@ Auto-apply is intentionally not implemented yet.
 
 ## Setup
 
+Prerequisite: Python 3.11 or newer.
+
 1. Create and activate a virtual environment.
 
 ```bash
-python -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 ```
 
-2. Install the project.
+If your machine has a newer Python, such as `python3.13`, use that instead.
+
+2. Upgrade pip and install the project.
 
 ```bash
+python -m pip install --upgrade pip
 pip install -e ".[dev]"
 ```
 
