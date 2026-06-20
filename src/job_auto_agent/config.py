@@ -17,6 +17,9 @@ class Settings:
     database_url: str
     gmail_query: str
     match_min_score: int
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4o-mini"
+    ai_tailoring_enabled: bool = False
 
     @property
     def sqlite_path(self) -> Path:
@@ -37,4 +40,7 @@ def get_settings() -> Settings:
             "OR subject:(job OR recruiter OR opportunity OR interview)) newer_than:90d",
         ),
         match_min_score=int(os.getenv("MATCH_MIN_SCORE", "35")),
+        openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        ai_tailoring_enabled=os.getenv("AI_TAILORING_ENABLED", "false").lower() == "true",
     )

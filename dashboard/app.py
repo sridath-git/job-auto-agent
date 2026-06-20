@@ -9,6 +9,7 @@ from job_auto_agent.resume.tailor import (
     DEFAULT_OUTPUT_DIR,
     ResumeTailoringError,
     tailor_resume_for_job,
+    tailor_resume_with_ai_for_job,
 )
 from job_auto_agent.storage.database import connect, init_db
 from job_auto_agent.storage.repository import JOB_STATUSES, list_jobs, update_job_status
@@ -104,11 +105,29 @@ for job in filtered:
                 "Overwrite existing generated resume",
                 key=overwrite_key,
             )
-        if st.button("Generate Tailored Resume", key=f"tailor-resume-{job['id']}"):
+        rule_col, ai_col = st.columns(2)
+        if rule_col.button("Generate Rule-Based Resume", key=f"tailor-rule-resume-{job['id']}"):
             try:
                 with connect(settings.sqlite_path) as conn:
                     result = tailor_resume_for_job(conn, job["id"], overwrite=overwrite)
                 st.success(f"Generated tailored resume: `{result.output_path}`")
+                if result.missing_keywords:
+                    st.warning(
+                        "Missing keywords to review manually: "
+                        + ", ".join(result.missing_keywords)
+                    )
+            except ResumeTailoringError as exc:
+                st.error(str(exc))
+        if ai_col.button("Generate AI-Tailored Resume", key=f"tailor-ai-resume-{job['id']}"):
+            try:
+                with connect(settings.sqlite_path) as conn:
+                    result = tailor_resume_with_ai_for_job(
+                        conn,
+                        job["id"],
+                        settings,
+                        overwrite=overwrite,
+                    )
+                st.success(f"Generated AI-tailored resume: `{result.output_path}`")
                 if result.missing_keywords:
                     st.warning(
                         "Missing keywords to review manually: "

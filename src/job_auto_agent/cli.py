@@ -7,6 +7,7 @@ from job_auto_agent.extraction.pipeline import extract_job
 from job_auto_agent.gmail.client import GmailClient
 from job_auto_agent.matching.engine import score_job
 from job_auto_agent.resume.tailor import ResumeTailoringError, tailor_resume_for_job
+from job_auto_agent.resume.tailor import tailor_resume_with_ai_for_job
 from job_auto_agent.storage.database import connect, init_db
 from job_auto_agent.storage.repository import list_jobs, save_email, save_job, save_match
 from job_auto_agent.validation import validate_setup
@@ -33,6 +34,11 @@ def main() -> None:
         "--overwrite",
         action="store_true",
         help="Replace an existing generated resume for this job.",
+    )
+    tailor_parser.add_argument(
+        "--ai",
+        action="store_true",
+        help="Use AI-assisted tailoring. Requires AI_TAILORING_ENABLED=true and OPENAI_API_KEY.",
     )
 
     args = parser.parse_args()
@@ -80,7 +86,15 @@ def main() -> None:
         init_db(settings.sqlite_path)
         with connect(settings.sqlite_path) as conn:
             try:
-                result = tailor_resume_for_job(conn, args.job_id, overwrite=args.overwrite)
+                if args.ai:
+                    result = tailor_resume_with_ai_for_job(
+                        conn,
+                        args.job_id,
+                        settings,
+                        overwrite=args.overwrite,
+                    )
+                else:
+                    result = tailor_resume_for_job(conn, args.job_id, overwrite=args.overwrite)
             except ResumeTailoringError as exc:
                 print(f"Unable to tailor resume: {exc}")
                 raise SystemExit(1) from exc

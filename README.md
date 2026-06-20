@@ -173,6 +173,7 @@ job-auto-agent sync-gmail --limit 25
 job-auto-agent score-jobs
 job-auto-agent validate-setup
 job-auto-agent tailor-resume --job-id 123
+job-auto-agent tailor-resume --job-id 123 --ai
 ```
 
 ## Manual Resume Tailoring
@@ -203,7 +204,7 @@ data/profile/profile.example.json
 
 ### CLI Usage
 
-Generate a tailored resume draft for a saved job:
+Generate a rule-based tailored resume draft for a saved job:
 
 ```bash
 job-auto-agent tailor-resume --job-id 123
@@ -229,15 +230,51 @@ The generated draft:
 - Suggests missing job keywords separately.
 - Does not claim missing skills as experience.
 
+### AI Tailoring
+
+AI-assisted tailoring uses the same single local master resume file:
+
+```text
+data/profile/master_resume.md
+```
+
+It does not require or support multiple resume versions. AI tailoring sends the selected job description and the local master resume content to the configured OpenAI-compatible API only when you explicitly request AI tailoring.
+
+Add these values to `.env`:
+
+```bash
+AI_TAILORING_ENABLED=true
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_API_KEY=your_api_key_here
+```
+
+Do not commit `.env` or real API keys.
+
+Generate an AI-tailored resume draft:
+
+```bash
+job-auto-agent tailor-resume --job-id 123 --ai
+```
+
+If `AI_TAILORING_ENABLED=false`, rule-based tailoring continues to work and AI tailoring shows a clear error. If `OPENAI_API_KEY` is missing, AI tailoring shows a clear error.
+
+AI-generated drafts must include:
+
+- `Missing Keywords To Review`
+- `Truthfulness Notes`
+
+The AI prompt explicitly instructs the provider not to fabricate companies, dates, roles, tools, metrics, certifications, skills, or experience. Missing keywords are suggested separately instead of added as claimed experience.
+
 ### Dashboard Usage
 
 In the Streamlit dashboard:
 
 1. Find the job you want to tailor for.
 2. Note the displayed job ID.
-3. Click **Generate Tailored Resume**.
-4. If a generated resume already exists, check **Overwrite existing generated resume** before regenerating.
-5. Review the generated Markdown file manually before using it.
+3. Click **Generate Rule-Based Resume** for local deterministic tailoring.
+4. Click **Generate AI-Tailored Resume** only when AI tailoring is enabled and you want to call the configured AI API.
+5. If a generated resume already exists, check **Overwrite existing generated resume** before regenerating.
+6. Review the generated Markdown file manually before using it.
 
 ## Project Structure
 
