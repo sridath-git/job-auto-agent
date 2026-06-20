@@ -244,6 +244,7 @@ Add these values to `.env`:
 
 ```bash
 AI_TAILORING_ENABLED=true
+OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
 OPENAI_API_KEY=your_api_key_here
 ```
@@ -255,6 +256,8 @@ Generate an AI-tailored resume draft:
 ```bash
 job-auto-agent tailor-resume --job-id 123 --ai
 ```
+
+`OPENAI_BASE_URL` defaults to OpenAI's API endpoint and can be changed for OpenAI-compatible providers.
 
 If `AI_TAILORING_ENABLED=false`, rule-based tailoring continues to work and AI tailoring shows a clear error. If `OPENAI_API_KEY` is missing, AI tailoring shows a clear error.
 

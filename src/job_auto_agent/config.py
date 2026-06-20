@@ -18,6 +18,7 @@ class Settings:
     gmail_query: str
     match_min_score: int
     openai_api_key: str | None = None
+    openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
     ai_tailoring_enabled: bool = False
 
@@ -41,6 +42,7 @@ def get_settings() -> Settings:
         ),
         match_min_score=int(os.getenv("MATCH_MIN_SCORE", "35")),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         ai_tailoring_enabled=os.getenv("AI_TAILORING_ENABLED", "false").lower() == "true",
     )

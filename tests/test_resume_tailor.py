@@ -178,8 +178,9 @@ def test_ai_tailoring_creates_output_with_required_sections(tmp_path, monkeypatc
     resume_path.write_text("Terraform platform engineering experience.", encoding="utf-8")
     settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
 
-    def fake_provider(api_key: str, model: str, prompt: str) -> str:
+    def fake_provider(api_key: str, base_url: str, model: str, prompt: str) -> str:
         assert api_key == "test-key"
+        assert base_url == "https://api.openai.com/v1"
         assert model == "test-model"
         assert "Do not fabricate anything" in prompt
         return """# AI-Tailored Resume Draft for Job 1
@@ -214,6 +215,113 @@ Terraform platform engineering experience.
     assert "## Missing Keywords To Review" in output
     assert "## Truthfulness Notes" in output
     assert "kubernetes" in result.missing_keywords
+
+
+def test_ai_tailoring_uses_custom_openai_base_url(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path)
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text("Terraform platform engineering experience.", encoding="utf-8")
+    settings = _settings(
+        tmp_path,
+        ai_tailoring_enabled=True,
+        openai_api_key="test-key",
+        openai_base_url="https://llm.example.com/v1",
+    )
+
+    def fake_provider(api_key: str, base_url: str, model: str, prompt: str) -> str:
+        assert api_key == "test-key"
+        assert base_url == "https://llm.example.com/v1"
+        assert model == "test-model"
+        return """# AI-Tailored Resume Draft for Job 1
+
+## Truthfulness Notes
+
+Uses only the provided master resume.
+
+## Missing Keywords To Review
+
+- None
+
+## Tailored Resume Draft
+
+Terraform platform engineering experience.
+"""
+
+    monkeypatch.setattr(tailor_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = tailor_resume_with_ai_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "generated",
+        )
+
+    assert result.output_path.exists()
+
+
+def test_openai_provider_builds_default_chat_completions_url(monkeypatch) -> None:
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            return b'{"choices":[{"message":{"content":"ok"}}]}'
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(tailor_module.urllib.request, "urlopen", fake_urlopen)
+
+    output = tailor_module._call_openai_compatible_provider(
+        api_key="test-key",
+        base_url="https://api.openai.com/v1",
+        model="test-model",
+        prompt="prompt",
+    )
+
+    assert output == "ok"
+    assert captured["url"] == "https://api.openai.com/v1/chat/completions"
+    assert captured["timeout"] == 60
+
+
+def test_openai_provider_builds_custom_chat_completions_url(monkeypatch) -> None:
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            return b'{"choices":[{"message":{"content":"ok"}}]}'
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        return FakeResponse()
+
+    monkeypatch.setattr(tailor_module.urllib.request, "urlopen", fake_urlopen)
+
+    tailor_module._call_openai_compatible_provider(
+        api_key="test-key",
+        base_url="https://llm.example.com/v1/",
+        model="test-model",
+        prompt="prompt",
+    )
+
+    assert captured["url"] == "https://llm.example.com/v1/chat/completions"
 
 
 def test_real_resume_and_generated_resumes_are_ignored() -> None:
@@ -258,6 +366,7 @@ def _settings(
     tmp_path,
     ai_tailoring_enabled: bool,
     openai_api_key: str | None,
+    openai_base_url: str = "https://api.openai.com/v1",
 ) -> Settings:
     return Settings(
         gmail_credentials_file=tmp_path / "credentials.json",
@@ -266,6 +375,7 @@ def _settings(
         gmail_query="newer_than:30d",
         match_min_score=35,
         openai_api_key=openai_api_key,
+        openai_base_url=openai_base_url,
         openai_model="test-model",
         ai_tailoring_enabled=ai_tailoring_enabled,
     )

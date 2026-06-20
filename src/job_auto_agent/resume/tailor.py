@@ -120,6 +120,7 @@ def tailor_resume_with_ai_for_job(
     prompt = build_ai_tailoring_prompt(job, resume_text, matched_keywords, missing_keywords)
     draft = _call_openai_compatible_provider(
         api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
         model=settings.openai_model,
         prompt=prompt,
     )
@@ -231,7 +232,12 @@ def _load_tailoring_inputs(
     return job
 
 
-def _call_openai_compatible_provider(api_key: str, model: str, prompt: str) -> str:
+def _call_openai_compatible_provider(
+    api_key: str,
+    base_url: str,
+    model: str,
+    prompt: str,
+) -> str:
     payload = {
         "model": model,
         "messages": [
@@ -243,8 +249,9 @@ def _call_openai_compatible_provider(api_key: str, model: str, prompt: str) -> s
         ],
         "temperature": 0.2,
     }
+    chat_completions_url = f"{base_url.rstrip('/')}/chat/completions"
     request = urllib.request.Request(
-        "https://api.openai.com/v1/chat/completions",
+        chat_completions_url,
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
