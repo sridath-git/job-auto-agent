@@ -3,10 +3,15 @@ from datetime import datetime, timezone
 import pytest
 
 from job_auto_agent.models import EmailMessage, JobOpportunity
+from job_auto_agent.config import Settings
+from job_auto_agent.resume import tailor as tailor_module
 from job_auto_agent.resume.tailor import (
+    AITailoringDisabledError,
     JobNotFoundError,
     MasterResumeMissingError,
+    OpenAIAPIKeyMissingError,
     tailor_resume_for_job,
+    tailor_resume_with_ai_for_job,
 )
 from job_auto_agent.storage.database import connect, init_db
 from job_auto_agent.storage.repository import save_email, save_job
@@ -123,6 +128,209 @@ def test_tailor_resume_does_not_invent_skills_in_highlights(tmp_path) -> None:
     assert "prometheus" in result.missing_keywords
 
 
+def test_ai_tailoring_disabled_errors_clearly(tmp_path) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path)
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text("Terraform and AWS platform engineering.", encoding="utf-8")
+    settings = _settings(tmp_path, ai_tailoring_enabled=False, openai_api_key="test-key")
+
+    with connect(db_path) as conn:
+        with pytest.raises(AITailoringDisabledError, match="AI tailoring is disabled"):
+            tailor_resume_with_ai_for_job(
+                conn,
+                job_id,
+                settings,
+                master_resume_path=resume_path,
+                output_dir=tmp_path / "generated",
+            )
+
+
+def test_ai_tailoring_missing_openai_api_key_errors_clearly(tmp_path) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path)
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text("Terraform and AWS platform engineering.", encoding="utf-8")
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key=None)
+
+    with connect(db_path) as conn:
+        with pytest.raises(OpenAIAPIKeyMissingError, match="OPENAI_API_KEY is missing"):
+            tailor_resume_with_ai_for_job(
+                conn,
+                job_id,
+                settings,
+                master_resume_path=resume_path,
+                output_dir=tmp_path / "generated",
+            )
+
+
+def test_ai_tailoring_creates_output_with_required_sections(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(
+        db_path,
+        title="Kubernetes Platform Engineer",
+        description="Terraform, Kubernetes, and Prometheus platform role.",
+    )
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text("Terraform platform engineering experience.", encoding="utf-8")
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(api_key: str, base_url: str, model: str, prompt: str) -> str:
+        assert api_key == "test-key"
+        assert base_url == "https://api.openai.com/v1"
+        assert model == "test-model"
+        assert "Do not fabricate anything" in prompt
+        return """# AI-Tailored Resume Draft for Job 1
+
+## Truthfulness Notes
+
+Uses only the provided master resume.
+
+## Missing Keywords To Review
+
+- kubernetes
+- prometheus
+
+## Tailored Resume Draft
+
+Terraform platform engineering experience.
+"""
+
+    monkeypatch.setattr(tailor_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = tailor_resume_with_ai_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "generated",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert result.output_path == tmp_path / "generated" / f"job_{job_id}_tailored_resume.md"
+    assert "## Missing Keywords To Review" in output
+    assert "## Truthfulness Notes" in output
+    assert "kubernetes" in result.missing_keywords
+
+
+def test_ai_tailoring_uses_custom_openai_base_url(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path)
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text("Terraform platform engineering experience.", encoding="utf-8")
+    settings = _settings(
+        tmp_path,
+        ai_tailoring_enabled=True,
+        openai_api_key="test-key",
+        openai_base_url="https://llm.example.com/v1",
+    )
+
+    def fake_provider(api_key: str, base_url: str, model: str, prompt: str) -> str:
+        assert api_key == "test-key"
+        assert base_url == "https://llm.example.com/v1"
+        assert model == "test-model"
+        return """# AI-Tailored Resume Draft for Job 1
+
+## Truthfulness Notes
+
+Uses only the provided master resume.
+
+## Missing Keywords To Review
+
+- None
+
+## Tailored Resume Draft
+
+Terraform platform engineering experience.
+"""
+
+    monkeypatch.setattr(tailor_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = tailor_resume_with_ai_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "generated",
+        )
+
+    assert result.output_path.exists()
+
+
+def test_openai_provider_builds_default_chat_completions_url(monkeypatch) -> None:
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            return b'{"choices":[{"message":{"content":"ok"}}]}'
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(tailor_module.urllib.request, "urlopen", fake_urlopen)
+
+    output = tailor_module._call_openai_compatible_provider(
+        api_key="test-key",
+        base_url="https://api.openai.com/v1",
+        model="test-model",
+        prompt="prompt",
+    )
+
+    assert output == "ok"
+    assert captured["url"] == "https://api.openai.com/v1/chat/completions"
+    assert captured["timeout"] == 60
+
+
+def test_openai_provider_builds_custom_chat_completions_url(monkeypatch) -> None:
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            return b'{"choices":[{"message":{"content":"ok"}}]}'
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        return FakeResponse()
+
+    monkeypatch.setattr(tailor_module.urllib.request, "urlopen", fake_urlopen)
+
+    tailor_module._call_openai_compatible_provider(
+        api_key="test-key",
+        base_url="https://llm.example.com/v1/",
+        model="test-model",
+        prompt="prompt",
+    )
+
+    assert captured["url"] == "https://llm.example.com/v1/chat/completions"
+
+
+def test_real_resume_and_generated_resumes_are_ignored() -> None:
+    gitignore = open(".gitignore", encoding="utf-8").read()
+
+    assert "data/profile/master_resume.md" in gitignore
+    assert "data/generated_resumes/" in gitignore
+
+
 def _seed_job(
     db_path,
     title: str = "Cloud Platform Engineer",
@@ -152,3 +360,22 @@ def _seed_job(
                 received_at=now,
             ),
         )
+
+
+def _settings(
+    tmp_path,
+    ai_tailoring_enabled: bool,
+    openai_api_key: str | None,
+    openai_base_url: str = "https://api.openai.com/v1",
+) -> Settings:
+    return Settings(
+        gmail_credentials_file=tmp_path / "credentials.json",
+        gmail_token_file=tmp_path / "token.json",
+        database_url=f"sqlite:///{tmp_path / 'jobs.db'}",
+        gmail_query="newer_than:30d",
+        match_min_score=35,
+        openai_api_key=openai_api_key,
+        openai_base_url=openai_base_url,
+        openai_model="test-model",
+        ai_tailoring_enabled=ai_tailoring_enabled,
+    )
