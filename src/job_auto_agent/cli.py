@@ -114,7 +114,10 @@ def main() -> None:
             except ResumeTailoringError as exc:
                 print(f"Unable to tailor resume: {exc}")
                 raise SystemExit(1) from exc
-        print(f"Generated tailored resume: {result.output_path}")
+        if result.output_path:
+            print(f"Generated tailored resume: {result.output_path}")
+        else:
+            print("AI resume generation is required for recruiter-ready tailored resumes.")
         print(f"Saved tailoring analysis: {result.analysis_path}")
         if result.missing_keywords:
             print("Missing keywords to review manually:")
