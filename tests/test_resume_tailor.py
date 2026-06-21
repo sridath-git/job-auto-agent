@@ -12,6 +12,7 @@ from job_auto_agent.resume.tailor import (
     JobNotFoundError,
     MasterResumeMissingError,
     OpenAIAPIKeyMissingError,
+    AITailoringProviderError,
     tailor_resume_for_job,
     tailor_resume_with_ai_for_job,
 )
@@ -445,6 +446,139 @@ def test_ai_tailoring_uses_local_ollama_without_real_api_key(tmp_path, monkeypat
     assert result.output_path.exists()
 
 
+def test_ai_tailoring_preserves_header_timelines_education_and_languages(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(
+        db_path,
+        title="Senior DevSecOps Engineer",
+        description="DevSecOps, Kubernetes, PKI, Vault, Terraform, and SRE role.",
+    )
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(_full_master_resume(), encoding="utf-8")
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        assert "Preserve the candidate header exactly" in prompt
+        return """```markdown
+## Overview
+
+Remove this section.
+
+## Professional Summary
+
+- Tailored DevSecOps and SRE summary based on existing resume content.
+
+## Core Skills
+
+- Kubernetes, Vault, PKI, Terraform, AWS, Azure, CI/CD
+
+## Professional Experience
+
+Intact Financial Corporation — Senior DevSecOps Security Engineer | Jan 2026 – Present
+- Rewritten truthful bullet.
+Morgan Stanley — Site Reliability Engineer | Montreal, QC | Dec 2024 – Present
+- Rewritten truthful bullet.
+Cognizant Technology Solutions — Site Reliability Engineer / DevSecOps Engineer | Montreal, QC | Nov 2020 – Sept 2024
+- Rewritten truthful bullet.
+Virtusa Consulting Services — Build & Release Engineer | Hyderabad, India | Jan 2015 – Apr 2017
+- Rewritten truthful bullet.
+
+## Education
+
+Master of Engineering (Quality Systems Engineering), Concordia University, Montreal
+
+## Languages
+
+English | Telugu | Hindi
+```"""
+
+    monkeypatch.setattr(tailor_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = tailor_resume_with_ai_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "generated",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert "Sridath Jeelugula" in output
+    assert "Senior DevSecOps Security Engineer" in output
+    assert "Montreal, QC" in output
+    assert "+1 555 123 4567" in output
+    assert "sridath@example.com" in output
+    assert "https://linkedin.com/in/sridath" in output
+    assert "Intact Financial Corporation — Senior DevSecOps Security Engineer | Jan 2026 – Present" in output
+    assert "Morgan Stanley — Site Reliability Engineer | Montreal, QC | Dec 2024 – Present" in output
+    assert (
+        "Cognizant Technology Solutions — Site Reliability Engineer / DevSecOps Engineer | "
+        "Montreal, QC | Nov 2020 – Sept 2024"
+    ) in output
+    assert "Virtusa Consulting Services — Build & Release Engineer | Hyderabad, India | Jan 2015 – Apr 2017" in output
+    assert "Master of Engineering (Quality Systems Engineering), Concordia University, Montreal" in output
+    assert "English | Telugu | Hindi" in output
+    assert "```" not in output
+    assert "## Overview" not in output
+
+
+def test_ai_tailoring_fails_when_required_timeline_is_missing(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path)
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(_full_master_resume(), encoding="utf-8")
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        return """## Professional Summary
+
+- Summary.
+
+## Core Skills & Tool Stack
+
+- Terraform
+
+## Professional Experience
+
+Morgan Stanley — Site Reliability Engineer | Montreal, QC | Dec 2024 – Present
+
+## Education
+
+Master of Engineering (Quality Systems Engineering), Concordia University, Montreal
+
+## Languages
+
+English | Telugu | Hindi
+"""
+
+    monkeypatch.setattr(tailor_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        with pytest.raises(AITailoringProviderError, match="company timeline"):
+            tailor_resume_with_ai_for_job(
+                conn,
+                job_id,
+                settings,
+                master_resume_path=resume_path,
+                output_dir=tmp_path / "generated",
+            )
+
+
 def test_openai_provider_builds_default_chat_completions_url(monkeypatch) -> None:
     captured = {}
 
@@ -605,3 +739,36 @@ def _settings(
         ai_tailoring_enabled=ai_tailoring_enabled,
         ai_provider_timeout_seconds=ai_provider_timeout_seconds,
     )
+
+
+def _full_master_resume() -> str:
+    return """# Sridath Jeelugula
+Senior DevSecOps Security Engineer
+Montreal, QC
++1 555 123 4567
+sridath@example.com
+https://linkedin.com/in/sridath
+
+## Professional Summary
+
+DevSecOps and SRE experience.
+
+## Professional Experience
+
+Intact Financial Corporation — Senior DevSecOps Security Engineer | Jan 2026 – Present
+- Kubernetes, Vault, PKI, and Terraform security automation.
+Morgan Stanley — Site Reliability Engineer | Montreal, QC | Dec 2024 – Present
+- Reliability engineering for cloud platforms.
+Cognizant Technology Solutions — Site Reliability Engineer / DevSecOps Engineer | Montreal, QC | Nov 2020 – Sept 2024
+- DevSecOps automation and platform support.
+Virtusa Consulting Services — Build & Release Engineer | Hyderabad, India | Jan 2015 – Apr 2017
+- Build and release automation.
+
+## Education
+
+Master of Engineering (Quality Systems Engineering), Concordia University, Montreal
+
+## Languages
+
+English | Telugu | Hindi
+"""
