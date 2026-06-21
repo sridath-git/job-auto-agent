@@ -94,7 +94,12 @@ def test_rule_based_cover_letter_generation_creates_output_file(tmp_path) -> Non
     job_id = _seed_job(db_path)
     resume_path = tmp_path / "master_resume.md"
     resume_path.write_text(
-        "Kubernetes, Terraform, DevSecOps, SRE, CI/CD, PKI, and reliability experience.",
+        "Sridath Jeelugula\n"
+        "Montreal, Quebec\n"
+        "sridath@example.com | +1 555 123 4567 | https://linkedin.com/in/sridath\n"
+        "Intact: Kubernetes, Terraform, DevSecOps, SRE, CI/CD, PKI, and reliability experience.\n"
+        "Morgan Stanley: Azure, AWS, Vault, Platform Engineering, and DevOps experience.\n"
+        "Cognizant: Cloud and production support experience.",
         encoding="utf-8",
     )
 
@@ -108,9 +113,11 @@ def test_rule_based_cover_letter_generation_creates_output_file(tmp_path) -> Non
 
     output = result.output_path.read_text(encoding="utf-8")
     assert result.output_path == tmp_path / "letters" / f"job_{job_id}_cover_letter.md"
-    assert "## Cover Letter" in output
     assert "ExampleCo" in output
-    assert "## Missing Keywords To Review" in output
+    assert result.analysis_path == tmp_path / "letters" / f"job_{job_id}_analysis.md"
+    assert result.analysis_path.exists()
+    _assert_recruiter_ready(output)
+    assert 250 <= _word_count(output) <= 400
 
 
 def test_ai_cover_letter_generation_creates_output_file(tmp_path, monkeypatch) -> None:
@@ -127,8 +134,6 @@ def test_ai_cover_letter_generation_creates_output_file(tmp_path, monkeypatch) -
         assert model == "test-model"
         assert "Do not fabricate experience" in prompt
         return """# Cover Letter Draft for Job 1
-
-## Cover Letter
 
 Dear Hiring Team,
 
@@ -156,8 +161,39 @@ Uses only the master resume.
 
     output = result.output_path.read_text(encoding="utf-8")
     assert result.output_path.exists()
-    assert "## Truthfulness Notes" in output
-    assert "## Missing Keywords To Review" in output
+    _assert_recruiter_ready(output)
+
+
+def test_cover_letter_excludes_contact_details_and_internal_sections(tmp_path) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path)
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(
+        "Sridath Jeelugula\n"
+        "Montreal, Quebec, Canada\n"
+        "sridath@example.com\n"
+        "+1 (555) 123-4567\n"
+        "https://www.linkedin.com/in/sridath\n"
+        "Intact: Kubernetes, Azure, AWS, Vault, PKI, Terraform, CI/CD, DevOps, DevSecOps, SRE, and Platform Engineering.\n"
+        "Morgan Stanley: Reliability and security engineering.\n"
+        "Cognizant: Cloud and production support.",
+        encoding="utf-8",
+    )
+
+    with connect(db_path) as conn:
+        result = generate_cover_letter_for_job(
+            conn,
+            job_id,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "letters",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    _assert_recruiter_ready(output)
+    assert "Intact" in output
+    assert "Morgan Stanley" in output
+    assert "Cognizant" in output
 
 
 def _seed_job(db_path) -> int:
@@ -203,3 +239,20 @@ def _settings(
         openai_model="test-model",
         ai_tailoring_enabled=ai_tailoring_enabled,
     )
+
+
+def _assert_recruiter_ready(output: str) -> None:
+    lowered = output.lower()
+    assert "sridath@example.com" not in lowered
+    assert "555" not in output
+    assert "linkedin.com" not in lowered
+    assert "montreal" not in lowered
+    assert "## safety notes" not in lowered
+    assert "## missing keywords" not in lowered
+    assert "## missing information warnings" not in lowered
+    assert "## truthfulness notes" not in lowered
+    assert "keyword analysis" not in lowered
+
+
+def _word_count(output: str) -> int:
+    return len(output.split())

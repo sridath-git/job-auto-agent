@@ -295,6 +295,14 @@ Generated cover letters are saved here and ignored by Git:
 data/generated_cover_letters/job_<id>_cover_letter.md
 ```
 
+The cover letter file contains only recruiter-facing content. Contact details, LinkedIn URLs, home location, safety notes, missing keyword sections, and internal warnings are excluded from the generated letter.
+
+Internal analysis is saved separately when generated:
+
+```text
+data/generated_cover_letters/job_<id>_analysis.md
+```
+
 Rule-based generation stays fully local:
 
 ```bash
