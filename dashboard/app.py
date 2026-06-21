@@ -5,6 +5,12 @@ import json
 import streamlit as st
 
 from job_auto_agent.config import get_settings
+from job_auto_agent.cover_letter.generator import (
+    CoverLetterGenerationError,
+    DEFAULT_COVER_LETTER_OUTPUT_DIR,
+    generate_ai_cover_letter_for_job,
+    generate_cover_letter_for_job,
+)
 from job_auto_agent.resume.tailor import (
     DEFAULT_OUTPUT_DIR,
     ResumeTailoringError,
@@ -134,6 +140,31 @@ for job in filtered:
                         + ", ".join(result.missing_keywords)
                     )
             except ResumeTailoringError as exc:
+                st.error(str(exc))
+        cover_letter_path = DEFAULT_COVER_LETTER_OUTPUT_DIR / f"job_{job['id']}_cover_letter.md"
+        if cover_letter_path.exists():
+            st.info(f"Cover letter already exists: `{cover_letter_path}`")
+        cover_rule_col, cover_ai_col = st.columns(2)
+        if cover_rule_col.button(
+            "Generate Rule-Based Cover Letter",
+            key=f"cover-letter-rule-{job['id']}",
+        ):
+            try:
+                with connect(settings.sqlite_path) as conn:
+                    result = generate_cover_letter_for_job(conn, job["id"])
+                st.success(f"Generated cover letter: `{result.output_path}`")
+                if result.warnings:
+                    st.warning("Warnings: " + " ".join(result.warnings))
+            except (CoverLetterGenerationError, ResumeTailoringError) as exc:
+                st.error(str(exc))
+        if cover_ai_col.button("Generate AI Cover Letter", key=f"cover-letter-ai-{job['id']}"):
+            try:
+                with connect(settings.sqlite_path) as conn:
+                    result = generate_ai_cover_letter_for_job(conn, job["id"], settings)
+                st.success(f"Generated AI cover letter: `{result.output_path}`")
+                if result.warnings:
+                    st.warning("Warnings: " + " ".join(result.warnings))
+            except (CoverLetterGenerationError, ResumeTailoringError) as exc:
                 st.error(str(exc))
         with st.expander("Email excerpt"):
             st.write(job["description"])
