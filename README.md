@@ -273,7 +273,40 @@ job-auto-agent tailor-resume --job-id 123 --ai
 
 `OPENAI_BASE_URL` defaults to OpenAI's API endpoint and can be changed for OpenAI-compatible providers.
 
-If `AI_TAILORING_ENABLED=false`, analysis-only tailoring continues to work and AI tailoring shows a clear error. If `OPENAI_API_KEY` is missing, AI tailoring shows a clear error.
+If `AI_TAILORING_ENABLED=false`, analysis-only tailoring continues to work and AI tailoring shows a clear error. If `OPENAI_API_KEY` is missing for a cloud provider, AI tailoring shows a clear error.
+
+### Free Local AI With Ollama
+
+You can use AI resume tailoring without a paid OpenAI API key by running a local OpenAI-compatible Ollama endpoint.
+
+Install Ollama, then download the model:
+
+```bash
+ollama pull qwen2.5:7b
+```
+
+Start Ollama:
+
+```bash
+ollama serve
+```
+
+Use these `.env` settings:
+
+```bash
+AI_TAILORING_ENABLED=true
+OPENAI_BASE_URL=http://localhost:11434/v1
+OPENAI_MODEL=qwen2.5:7b
+OPENAI_API_KEY=ollama
+```
+
+`OPENAI_API_KEY=ollama` is a local dummy value for Ollama. A real OpenAI API key is still required when `OPENAI_BASE_URL=https://api.openai.com/v1`.
+
+Generate an Ollama-backed tailored resume:
+
+```bash
+job-auto-agent tailor-resume --job-id 123 --ai --overwrite
+```
 
 AI-generated resume files are also recruiter-facing only. The app removes internal safety notes, keyword analysis, missing-keyword sections, and contact details outside the top header before saving the resume file. Missing keywords are written to the separate analysis file instead of added as claimed experience.
 
@@ -331,6 +364,12 @@ AI_TAILORING_ENABLED=true
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
 OPENAI_API_KEY=your_api_key_here
+```
+
+For free local Ollama cover letter generation, use the Ollama `.env` settings above and run:
+
+```bash
+job-auto-agent generate-cover-letter --job-id 123 --ai
 ```
 
 The cover letter generator does not auto-apply, send emails, or upload files. Drafts must be manually reviewed before use.

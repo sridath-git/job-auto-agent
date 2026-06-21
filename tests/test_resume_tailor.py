@@ -369,6 +369,61 @@ Terraform platform engineering experience.
     assert result.output_path.exists()
 
 
+def test_ai_tailoring_uses_local_ollama_without_real_api_key(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path)
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text("Terraform platform engineering experience.", encoding="utf-8")
+    settings = _settings(
+        tmp_path,
+        ai_tailoring_enabled=True,
+        openai_api_key=None,
+        openai_base_url="http://localhost:11434/v1",
+        openai_model="qwen2.5:7b",
+    )
+
+    def fake_provider(api_key: str, base_url: str, model: str, prompt: str) -> str:
+        assert api_key == "ollama"
+        assert base_url == "http://localhost:11434/v1"
+        assert model == "qwen2.5:7b"
+        return """# Candidate
+
+## Professional Summary
+
+- Terraform platform engineering experience.
+
+## Core Skills
+
+- Terraform
+
+## Professional Experience
+
+- Terraform platform engineering experience.
+
+## Education
+
+- Not specified in master resume.
+
+## Languages
+
+- Not specified in master resume.
+"""
+
+    monkeypatch.setattr(tailor_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = tailor_resume_with_ai_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "generated",
+        )
+
+    assert result.output_path.exists()
+
+
 def test_openai_provider_builds_default_chat_completions_url(monkeypatch) -> None:
     captured = {}
 
@@ -430,6 +485,35 @@ def test_openai_provider_builds_custom_chat_completions_url(monkeypatch) -> None
     assert captured["url"] == "https://llm.example.com/v1/chat/completions"
 
 
+def test_openai_provider_builds_ollama_chat_completions_url(monkeypatch) -> None:
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            return b'{"choices":[{"message":{"content":"ok"}}]}'
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        return FakeResponse()
+
+    monkeypatch.setattr(tailor_module.urllib.request, "urlopen", fake_urlopen)
+
+    tailor_module._call_openai_compatible_provider(
+        api_key="ollama",
+        base_url="http://localhost:11434/v1",
+        model="qwen2.5:7b",
+        prompt="prompt",
+    )
+
+    assert captured["url"] == "http://localhost:11434/v1/chat/completions"
+
+
 def test_real_resume_and_generated_resumes_are_ignored() -> None:
     gitignore = open(".gitignore", encoding="utf-8").read()
 
@@ -479,6 +563,7 @@ def _settings(
     ai_tailoring_enabled: bool,
     openai_api_key: str | None,
     openai_base_url: str = "https://api.openai.com/v1",
+    openai_model: str = "test-model",
 ) -> Settings:
     return Settings(
         gmail_credentials_file=tmp_path / "credentials.json",
@@ -488,6 +573,6 @@ def _settings(
         match_min_score=35,
         openai_api_key=openai_api_key,
         openai_base_url=openai_base_url,
-        openai_model="test-model",
+        openai_model=openai_model,
         ai_tailoring_enabled=ai_tailoring_enabled,
     )

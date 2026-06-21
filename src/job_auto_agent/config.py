@@ -3,11 +3,15 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
 
 load_dotenv()
+
+LOCAL_OPENAI_HOSTS = {"localhost", "127.0.0.1", "::1"}
+LOCAL_DUMMY_API_KEYS = {"ollama", "dummy", "local"}
 
 
 @dataclass(frozen=True)
@@ -46,3 +50,25 @@ def get_settings() -> Settings:
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         ai_tailoring_enabled=os.getenv("AI_TAILORING_ENABLED", "false").lower() == "true",
     )
+
+
+def is_local_openai_base_url(base_url: str) -> bool:
+    parsed = urlparse(base_url)
+    return (parsed.hostname or "").lower() in LOCAL_OPENAI_HOSTS
+
+
+def is_openai_cloud_base_url(base_url: str) -> bool:
+    parsed = urlparse(base_url)
+    return (parsed.hostname or "").lower() == "api.openai.com"
+
+
+def resolve_openai_api_key(settings: Settings) -> str | None:
+    if settings.openai_api_key:
+        return settings.openai_api_key
+    if is_local_openai_base_url(settings.openai_base_url):
+        return "ollama"
+    return None
+
+
+def is_dummy_local_api_key(api_key: str | None) -> bool:
+    return bool(api_key) and api_key.strip().lower() in LOCAL_DUMMY_API_KEYS

@@ -164,6 +164,49 @@ Uses only the master resume.
     _assert_recruiter_ready(output)
 
 
+def test_ai_cover_letter_uses_local_ollama_dummy_key(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path)
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text("Kubernetes and Terraform experience.", encoding="utf-8")
+    settings = _settings(
+        tmp_path,
+        ai_tailoring_enabled=True,
+        openai_api_key="ollama",
+        openai_base_url="http://127.0.0.1:11434/v1",
+        openai_model="qwen2.5:7b",
+    )
+
+    def fake_provider(api_key: str, base_url: str, model: str, prompt: str) -> str:
+        assert api_key == "ollama"
+        assert base_url == "http://127.0.0.1:11434/v1"
+        assert model == "qwen2.5:7b"
+        assert "Do not fabricate experience" in prompt
+        return """Dear Hiring Team,
+
+I am interested in the Platform Security Engineer role at ExampleCo.
+
+My background includes Kubernetes and Terraform experience that aligns with the role.
+
+Sincerely,
+Sridath
+"""
+
+    monkeypatch.setattr(cover_letter_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = generate_ai_cover_letter_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "letters",
+        )
+
+    assert result.output_path.exists()
+
+
 def test_cover_letter_excludes_contact_details_and_internal_sections(tmp_path) -> None:
     db_path = tmp_path / "jobs.db"
     init_db(db_path)
@@ -227,6 +270,8 @@ def _settings(
     tmp_path,
     ai_tailoring_enabled: bool,
     openai_api_key: str | None,
+    openai_base_url: str = "https://api.openai.com/v1",
+    openai_model: str = "test-model",
 ) -> Settings:
     return Settings(
         gmail_credentials_file=tmp_path / "credentials.json",
@@ -235,8 +280,8 @@ def _settings(
         gmail_query="newer_than:30d",
         match_min_score=35,
         openai_api_key=openai_api_key,
-        openai_base_url="https://api.openai.com/v1",
-        openai_model="test-model",
+        openai_base_url=openai_base_url,
+        openai_model=openai_model,
         ai_tailoring_enabled=ai_tailoring_enabled,
     )
 
