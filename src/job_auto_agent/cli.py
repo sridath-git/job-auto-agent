@@ -115,6 +115,7 @@ def main() -> None:
                 print(f"Unable to tailor resume: {exc}")
                 raise SystemExit(1) from exc
         print(f"Generated tailored resume: {result.output_path}")
+        print(f"Saved tailoring analysis: {result.analysis_path}")
         if result.missing_keywords:
             print("Missing keywords to review manually:")
             for keyword in result.missing_keywords:

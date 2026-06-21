@@ -67,8 +67,14 @@ def test_tailor_resume_creates_markdown_file(tmp_path) -> None:
         )
 
     assert result.output_path.exists()
+    assert result.analysis_path.exists()
     assert result.output_path.name == f"job_{job_id}_tailored_resume.md"
-    assert "Tailored Resume Draft" in result.output_path.read_text(encoding="utf-8")
+    output = result.output_path.read_text(encoding="utf-8")
+    assert "## Professional Summary" in output
+    assert "## Core Skills" in output
+    assert "## Professional Experience" in output
+    assert "## Education" in output
+    assert "## Languages" in output
 
 
 def test_tailor_resume_suggests_missing_keywords(tmp_path) -> None:
@@ -92,9 +98,10 @@ def test_tailor_resume_suggests_missing_keywords(tmp_path) -> None:
 
     assert "kubernetes" in result.missing_keywords
     assert "prometheus" in result.missing_keywords
+    assert "## Missing Job Keywords" in result.analysis_path.read_text(encoding="utf-8")
 
 
-def test_tailor_resume_does_not_invent_skills_in_highlights(tmp_path) -> None:
+def test_tailor_resume_does_not_invent_missing_skills(tmp_path) -> None:
     db_path = tmp_path / "jobs.db"
     init_db(db_path)
     job_id = _seed_job(
@@ -117,15 +124,82 @@ def test_tailor_resume_does_not_invent_skills_in_highlights(tmp_path) -> None:
         )
 
     output = result.output_path.read_text(encoding="utf-8")
-    highlights = output.split("## Relevant Existing Resume Highlights", maxsplit=1)[1].split(
-        "## Master Resume Content for Manual Editing",
-        maxsplit=1,
-    )[0]
 
-    assert "kubernetes" not in highlights.lower()
-    assert "prometheus" not in highlights.lower()
+    assert "kubernetes" not in output.lower()
+    assert "prometheus" not in output.lower()
     assert "kubernetes" in result.missing_keywords
     assert "prometheus" in result.missing_keywords
+
+
+def test_tailor_resume_is_recruiter_ready_without_debug_sections(tmp_path) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(
+        db_path,
+        title="DevSecOps Platform Engineer",
+        description="DevSecOps, Kubernetes, Vault, PKI, AWS, Azure, Terraform, CI/CD, and SRE role.",
+    )
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(
+        """# Sridath Jeelugula
+
+Phone: +1 555 123 4567
+Email: sridath@example.com
+LinkedIn: https://linkedin.com/in/sridath
+Montreal, Canada
+
+## Professional Summary
+
+DevOps and DevSecOps engineer with Kubernetes, Azure, AWS, Vault, PKI, Terraform, CI/CD, SRE, and Platform Engineering experience.
+
+## Professional Experience
+
+- Intact: Built Kubernetes platform automation with Terraform, Vault, PKI, and CI/CD.
+- Morgan Stanley: Supported AWS and Azure platform reliability.
+- Cognizant: Delivered DevOps automation.
+
+## Education
+
+- Example University
+
+## Languages
+
+- English
+""",
+        encoding="utf-8",
+    )
+
+    with connect(db_path) as conn:
+        result = tailor_resume_for_job(
+            conn,
+            job_id,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "generated",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    body = _body_after_header(output)
+    blocked_sections = [
+        "Safety Notice",
+        "Relevant Existing Keywords",
+        "Missing Job Keywords",
+        "Relevant Existing Resume Highlights",
+        "Master Resume Content",
+        "Missing Information Warnings",
+        "keyword analysis",
+        "debug",
+    ]
+    for section in blocked_sections:
+        assert section not in output
+    assert "+1 555 123 4567" in output.split("## Professional Summary", maxsplit=1)[0]
+    assert "sridath@example.com" in output.split("## Professional Summary", maxsplit=1)[0]
+    assert "linkedin.com/in/sridath" in output.split("## Professional Summary", maxsplit=1)[0]
+    assert "+1 555 123 4567" not in body
+    assert "sridath@example.com" not in body
+    assert "linkedin.com/in/sridath" not in body
+    assert "Intact" in output
+    assert "Morgan Stanley" in output
+    assert "Cognizant" in output
 
 
 def test_ai_tailoring_disabled_errors_clearly(tmp_path) -> None:
@@ -183,7 +257,9 @@ def test_ai_tailoring_creates_output_with_required_sections(tmp_path, monkeypatc
         assert base_url == "https://api.openai.com/v1"
         assert model == "test-model"
         assert "Do not fabricate anything" in prompt
-        return """# AI-Tailored Resume Draft for Job 1
+        return """# Sridath Jeelugula
+
+sridath@example.com | https://linkedin.com/in/sridath
 
 ## Truthfulness Notes
 
@@ -196,7 +272,25 @@ Uses only the provided master resume.
 
 ## Tailored Resume Draft
 
-Terraform platform engineering experience.
+## Professional Summary
+
+- Terraform platform engineering experience.
+
+## Core Skills
+
+- Terraform
+
+## Professional Experience
+
+- Terraform platform engineering experience with sridath@example.com.
+
+## Education
+
+- Not specified in master resume.
+
+## Languages
+
+- Not specified in master resume.
 """
 
     monkeypatch.setattr(tailor_module, "_call_openai_compatible_provider", fake_provider)
@@ -212,8 +306,10 @@ Terraform platform engineering experience.
 
     output = result.output_path.read_text(encoding="utf-8")
     assert result.output_path == tmp_path / "generated" / f"job_{job_id}_tailored_resume.md"
-    assert "## Missing Keywords To Review" in output
-    assert "## Truthfulness Notes" in output
+    assert result.analysis_path == tmp_path / "generated" / f"job_{job_id}_analysis.md"
+    assert "## Missing Keywords To Review" not in output
+    assert "## Truthfulness Notes" not in output
+    assert "sridath@example.com" not in _body_after_header(output)
     assert "kubernetes" in result.missing_keywords
 
 
@@ -329,6 +425,12 @@ def test_real_resume_and_generated_resumes_are_ignored() -> None:
 
     assert "data/profile/master_resume.md" in gitignore
     assert "data/generated_resumes/" in gitignore
+
+
+def _body_after_header(markdown: str) -> str:
+    if "## Professional Summary" not in markdown:
+        return markdown
+    return markdown.split("## Professional Summary", maxsplit=1)[1]
 
 
 def _seed_job(

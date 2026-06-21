@@ -117,6 +117,7 @@ for job in filtered:
                 with connect(settings.sqlite_path) as conn:
                     result = tailor_resume_for_job(conn, job["id"], overwrite=overwrite)
                 st.success(f"Generated tailored resume: `{result.output_path}`")
+                st.info(f"Saved tailoring analysis: `{result.analysis_path}`")
                 if result.missing_keywords:
                     st.warning(
                         "Missing keywords to review manually: "
@@ -134,6 +135,7 @@ for job in filtered:
                         overwrite=overwrite,
                     )
                 st.success(f"Generated AI-tailored resume: `{result.output_path}`")
+                st.info(f"Saved tailoring analysis: `{result.analysis_path}`")
                 if result.missing_keywords:
                     st.warning(
                         "Missing keywords to review manually: "
