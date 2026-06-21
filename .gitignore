@@ -21,3 +21,4 @@ data/*.sqlite-*
 data/*.sqlite3-*
 data/profile/master_resume.md
 data/generated_resumes/
+data/generated_cover_letters/

@@ -3,6 +3,11 @@ from __future__ import annotations
 import argparse
 
 from job_auto_agent.config import get_settings
+from job_auto_agent.cover_letter.generator import (
+    CoverLetterGenerationError,
+    generate_ai_cover_letter_for_job,
+    generate_cover_letter_for_job,
+)
 from job_auto_agent.extraction.pipeline import extract_job
 from job_auto_agent.gmail.client import GmailClient
 from job_auto_agent.matching.engine import score_job
@@ -39,6 +44,17 @@ def main() -> None:
         "--ai",
         action="store_true",
         help="Use AI-assisted tailoring. Requires AI_TAILORING_ENABLED=true and OPENAI_API_KEY.",
+    )
+
+    cover_letter_parser = subparsers.add_parser(
+        "generate-cover-letter",
+        help="Generate a cover letter draft for a saved job.",
+    )
+    cover_letter_parser.add_argument("--job-id", type=int, required=True)
+    cover_letter_parser.add_argument(
+        "--ai",
+        action="store_true",
+        help="Use AI-assisted cover letter generation.",
     )
 
     args = parser.parse_args()
@@ -103,3 +119,21 @@ def main() -> None:
             print("Missing keywords to review manually:")
             for keyword in result.missing_keywords:
                 print(f"- {keyword}")
+        return
+
+    if args.command == "generate-cover-letter":
+        init_db(settings.sqlite_path)
+        with connect(settings.sqlite_path) as conn:
+            try:
+                if args.ai:
+                    result = generate_ai_cover_letter_for_job(conn, args.job_id, settings)
+                else:
+                    result = generate_cover_letter_for_job(conn, args.job_id)
+            except (CoverLetterGenerationError, ResumeTailoringError) as exc:
+                print(f"Unable to generate cover letter: {exc}")
+                raise SystemExit(1) from exc
+        print(f"Generated cover letter: {result.output_path}")
+        if result.warnings:
+            print("Warnings:")
+            for warning in result.warnings:
+                print(f"- {warning}")

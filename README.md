@@ -174,6 +174,8 @@ job-auto-agent score-jobs
 job-auto-agent validate-setup
 job-auto-agent tailor-resume --job-id 123
 job-auto-agent tailor-resume --job-id 123 --ai
+job-auto-agent generate-cover-letter --job-id 123
+job-auto-agent generate-cover-letter --job-id 123 --ai
 ```
 
 ## Manual Resume Tailoring
@@ -279,14 +281,60 @@ In the Streamlit dashboard:
 5. If a generated resume already exists, check **Overwrite existing generated resume** before regenerating.
 6. Review the generated Markdown file manually before using it.
 
+## Cover Letter Generation
+
+The app can generate a local Markdown cover letter draft for a selected job using the saved job description and your local master resume:
+
+```text
+data/profile/master_resume.md
+```
+
+Generated cover letters are saved here and ignored by Git:
+
+```text
+data/generated_cover_letters/job_<id>_cover_letter.md
+```
+
+Rule-based generation stays fully local:
+
+```bash
+job-auto-agent generate-cover-letter --job-id 123
+```
+
+AI-assisted generation uses the same AI configuration as AI resume tailoring and only calls the configured AI API when `--ai` is explicitly used:
+
+```bash
+job-auto-agent generate-cover-letter --job-id 123 --ai
+```
+
+AI cover letter generation requires:
+
+```bash
+AI_TAILORING_ENABLED=true
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_API_KEY=your_api_key_here
+```
+
+The cover letter generator does not auto-apply, send emails, or upload files. Drafts must be manually reviewed before use.
+
+In the Streamlit dashboard, each job shows:
+
+- **Generate Rule-Based Cover Letter**
+- **Generate AI Cover Letter**
+
+After generation, the dashboard shows the generated file path and any missing-information warnings.
+
 ## Project Structure
 
 ```text
 dashboard/                  Streamlit UI
 data/profile/               Local profile examples and ignored real master resume
+data/generated_cover_letters/ Ignored local generated cover letters
 src/job_auto_agent/
   cli.py                    Command-line entrypoint
   config.py                 Environment-driven settings
+  cover_letter/             Manual cover letter generation
   gmail/                    Gmail OAuth and message fetchers
   extraction/               Job extraction pipeline
   matching/                 DevSecOps/AppSec/PKI scoring
