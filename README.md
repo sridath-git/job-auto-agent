@@ -206,39 +206,43 @@ data/profile/profile.example.json
 
 ### CLI Usage
 
-Generate a rule-based tailored resume draft for a saved job:
+Generate local resume tailoring analysis for a saved job:
 
 ```bash
 job-auto-agent tailor-resume --job-id 123
 ```
 
-The output is saved locally:
-
-```text
-data/generated_resumes/job_123_tailored_resume.md
-```
-
-Internal keyword analysis is saved separately:
+This command does not generate a recruiter-ready tailored resume. It saves keyword analysis only:
 
 ```text
 data/generated_resumes/job_123_analysis.md
 ```
 
-Generated resumes and analysis files are ignored by Git. If a generated resume already exists, the command will not overwrite it unless you explicitly pass:
+Final tailored resume generation requires AI:
 
 ```bash
-job-auto-agent tailor-resume --job-id 123 --overwrite
+job-auto-agent tailor-resume --job-id 123 --ai
 ```
 
-The generated draft:
+The AI-generated resume is saved locally:
+
+```text
+data/generated_resumes/job_123_tailored_resume.md
+```
+
+Generated resumes and analysis files are ignored by Git. If an AI-generated resume already exists, the command will not overwrite it unless you explicitly pass:
+
+```bash
+job-auto-agent tailor-resume --job-id 123 --ai --overwrite
+```
+
+The analysis-only command:
 
 - Extracts important job keywords.
 - Compares job keywords with the master resume.
-- Creates a recruiter-facing resume with Professional Summary, Core Skills, Professional Experience, Education, and Languages sections.
-- Reorders and emphasizes truthful existing content from the master resume.
-- Keeps keyword analysis and missing job keywords in the separate analysis file.
-- Keeps contact details only in the top header when they already exist in the master resume.
-- Does not claim missing skills as experience.
+- Saves matched and missing keywords to `data/generated_resumes/job_<id>_analysis.md`.
+- Prints `AI resume generation is required for recruiter-ready tailored resumes.`
+- Does not write `data/generated_resumes/job_<id>_tailored_resume.md`.
 
 ### AI Tailoring
 
@@ -269,7 +273,7 @@ job-auto-agent tailor-resume --job-id 123 --ai
 
 `OPENAI_BASE_URL` defaults to OpenAI's API endpoint and can be changed for OpenAI-compatible providers.
 
-If `AI_TAILORING_ENABLED=false`, rule-based tailoring continues to work and AI tailoring shows a clear error. If `OPENAI_API_KEY` is missing, AI tailoring shows a clear error.
+If `AI_TAILORING_ENABLED=false`, analysis-only tailoring continues to work and AI tailoring shows a clear error. If `OPENAI_API_KEY` is missing, AI tailoring shows a clear error.
 
 AI-generated resume files are also recruiter-facing only. The app removes internal safety notes, keyword analysis, missing-keyword sections, and contact details outside the top header before saving the resume file. Missing keywords are written to the separate analysis file instead of added as claimed experience.
 
@@ -281,8 +285,8 @@ In the Streamlit dashboard:
 
 1. Find the job you want to tailor for.
 2. Note the displayed job ID.
-3. Click **Generate Rule-Based Resume** for local deterministic tailoring.
-4. Click **Generate AI-Tailored Resume** only when AI tailoring is enabled and you want to call the configured AI API.
+3. Click **Generate Resume Analysis** for local keyword analysis.
+4. Click **Generate AI-Tailored Resume** only when AI tailoring is enabled and you want a recruiter-ready tailored resume from the configured AI API.
 5. If a generated resume already exists, check **Overwrite existing generated resume** before regenerating.
 6. Review the generated resume and the separate analysis file manually before using it.
 

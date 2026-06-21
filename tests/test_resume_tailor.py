@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
+import sys
 
 import pytest
 
+from job_auto_agent.cli import main
 from job_auto_agent.models import EmailMessage, JobOpportunity
 from job_auto_agent.config import Settings
 from job_auto_agent.resume import tailor as tailor_module
@@ -48,7 +50,7 @@ def test_tailor_resume_fails_when_job_id_not_found(tmp_path) -> None:
             )
 
 
-def test_tailor_resume_creates_markdown_file(tmp_path) -> None:
+def test_tailor_resume_creates_analysis_only(tmp_path) -> None:
     db_path = tmp_path / "jobs.db"
     init_db(db_path)
     job_id = _seed_job(db_path)
@@ -66,15 +68,14 @@ def test_tailor_resume_creates_markdown_file(tmp_path) -> None:
             output_dir=tmp_path / "generated",
         )
 
-    assert result.output_path.exists()
+    expected_resume_path = tmp_path / "generated" / f"job_{job_id}_tailored_resume.md"
+    assert result.output_path is None
+    assert not expected_resume_path.exists()
     assert result.analysis_path.exists()
-    assert result.output_path.name == f"job_{job_id}_tailored_resume.md"
-    output = result.output_path.read_text(encoding="utf-8")
-    assert "## Professional Summary" in output
-    assert "## Core Skills" in output
-    assert "## Professional Experience" in output
-    assert "## Education" in output
-    assert "## Languages" in output
+    assert result.analysis_path.name == f"job_{job_id}_analysis.md"
+    output = result.analysis_path.read_text(encoding="utf-8")
+    assert "## Relevant Existing Keywords" in output
+    assert "## Missing Job Keywords" in output
 
 
 def test_tailor_resume_suggests_missing_keywords(tmp_path) -> None:
@@ -101,7 +102,7 @@ def test_tailor_resume_suggests_missing_keywords(tmp_path) -> None:
     assert "## Missing Job Keywords" in result.analysis_path.read_text(encoding="utf-8")
 
 
-def test_tailor_resume_does_not_invent_missing_skills(tmp_path) -> None:
+def test_tailor_resume_analysis_does_not_create_final_resume(tmp_path) -> None:
     db_path = tmp_path / "jobs.db"
     init_db(db_path)
     job_id = _seed_job(
@@ -123,15 +124,15 @@ def test_tailor_resume_does_not_invent_missing_skills(tmp_path) -> None:
             output_dir=tmp_path / "generated",
         )
 
-    output = result.output_path.read_text(encoding="utf-8")
+    output_path = tmp_path / "generated" / f"job_{job_id}_tailored_resume.md"
 
-    assert "kubernetes" not in output.lower()
-    assert "prometheus" not in output.lower()
+    assert result.output_path is None
+    assert not output_path.exists()
     assert "kubernetes" in result.missing_keywords
     assert "prometheus" in result.missing_keywords
 
 
-def test_tailor_resume_is_recruiter_ready_without_debug_sections(tmp_path) -> None:
+def test_tailor_resume_analysis_does_not_leak_contact_details_into_final_resume(tmp_path) -> None:
     db_path = tmp_path / "jobs.db"
     init_db(db_path)
     job_id = _seed_job(
@@ -177,29 +178,38 @@ DevOps and DevSecOps engineer with Kubernetes, Azure, AWS, Vault, PKI, Terraform
             output_dir=tmp_path / "generated",
         )
 
-    output = result.output_path.read_text(encoding="utf-8")
-    body = _body_after_header(output)
-    blocked_sections = [
-        "Safety Notice",
-        "Relevant Existing Keywords",
-        "Missing Job Keywords",
-        "Relevant Existing Resume Highlights",
-        "Master Resume Content",
-        "Missing Information Warnings",
-        "keyword analysis",
-        "debug",
-    ]
-    for section in blocked_sections:
-        assert section not in output
-    assert "+1 555 123 4567" in output.split("## Professional Summary", maxsplit=1)[0]
-    assert "sridath@example.com" in output.split("## Professional Summary", maxsplit=1)[0]
-    assert "linkedin.com/in/sridath" in output.split("## Professional Summary", maxsplit=1)[0]
-    assert "+1 555 123 4567" not in body
-    assert "sridath@example.com" not in body
-    assert "linkedin.com/in/sridath" not in body
-    assert "Intact" in output
-    assert "Morgan Stanley" in output
-    assert "Cognizant" in output
+    output_path = tmp_path / "generated" / f"job_{job_id}_tailored_resume.md"
+
+    assert result.output_path is None
+    assert result.analysis_path.exists()
+    assert not output_path.exists()
+
+
+def test_cli_non_ai_resume_tailoring_generates_analysis_only_message(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path)
+    profile_dir = tmp_path / "data" / "profile"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "master_resume.md").write_text(
+        "Terraform and AWS platform engineering experience.",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    monkeypatch.setattr(sys, "argv", ["job-auto-agent", "tailor-resume", "--job-id", str(job_id)])
+
+    main()
+
+    captured = capsys.readouterr()
+    assert "AI resume generation is required for recruiter-ready tailored resumes." in captured.out
+    assert f"Saved tailoring analysis: data/generated_resumes/job_{job_id}_analysis.md" in captured.out
+    assert (tmp_path / "data" / "generated_resumes" / f"job_{job_id}_analysis.md").exists()
+    assert not (tmp_path / "data" / "generated_resumes" / f"job_{job_id}_tailored_resume.md").exists()
 
 
 def test_ai_tailoring_disabled_errors_clearly(tmp_path) -> None:

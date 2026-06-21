@@ -52,7 +52,7 @@ class AITailoringProviderError(ResumeTailoringError):
 @dataclass(frozen=True)
 class TailoredResumeResult:
     job_id: int
-    output_path: Path
+    output_path: Path | None
     analysis_path: Path
     matched_keywords: list[str]
     missing_keywords: list[str]
@@ -75,24 +75,18 @@ def tailor_resume_for_job(
             "Create it from data/profile/master_resume.example.md."
         )
 
+    _ = overwrite
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"job_{job_id}_tailored_resume.md"
     analysis_path = _analysis_path(output_dir, job_id)
-    if output_path.exists() and not overwrite:
-        raise TailoredResumeExistsError(
-            f"{output_path} already exists. Re-run with --overwrite to replace it."
-        )
 
     resume_text = master_resume_path.read_text(encoding="utf-8")
     job_keywords = extract_job_keywords(job["title"], job["description"])
     matched_keywords, missing_keywords = compare_keywords(job_keywords, resume_text)
-    draft = _render_recruiter_ready_resume(job, resume_text, matched_keywords)
-    output_path.write_text(draft, encoding="utf-8")
     _write_resume_analysis(analysis_path, job, matched_keywords, missing_keywords)
 
     return TailoredResumeResult(
         job_id=job_id,
-        output_path=output_path,
+        output_path=None,
         analysis_path=analysis_path,
         matched_keywords=matched_keywords,
         missing_keywords=missing_keywords,

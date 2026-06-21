@@ -112,12 +112,12 @@ for job in filtered:
                 key=overwrite_key,
             )
         rule_col, ai_col = st.columns(2)
-        if rule_col.button("Generate Rule-Based Resume", key=f"tailor-rule-resume-{job['id']}"):
+        if rule_col.button("Generate Resume Analysis", key=f"tailor-rule-resume-{job['id']}"):
             try:
                 with connect(settings.sqlite_path) as conn:
                     result = tailor_resume_for_job(conn, job["id"], overwrite=overwrite)
-                st.success(f"Generated tailored resume: `{result.output_path}`")
-                st.info(f"Saved tailoring analysis: `{result.analysis_path}`")
+                st.success(f"Generated resume analysis: `{result.analysis_path}`")
+                st.info("AI resume generation is required for recruiter-ready tailored resumes.")
                 if result.missing_keywords:
                     st.warning(
                         "Missing keywords to review manually: "
