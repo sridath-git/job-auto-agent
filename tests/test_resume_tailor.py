@@ -262,10 +262,17 @@ def test_ai_tailoring_creates_output_with_required_sections(tmp_path, monkeypatc
     resume_path.write_text("Terraform platform engineering experience.", encoding="utf-8")
     settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
 
-    def fake_provider(api_key: str, base_url: str, model: str, prompt: str) -> str:
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
         assert api_key == "test-key"
         assert base_url == "https://api.openai.com/v1"
         assert model == "test-model"
+        assert timeout_seconds == 60
         assert "Do not fabricate anything" in prompt
         return """# Sridath Jeelugula
 
@@ -336,10 +343,17 @@ def test_ai_tailoring_uses_custom_openai_base_url(tmp_path, monkeypatch) -> None
         openai_base_url="https://llm.example.com/v1",
     )
 
-    def fake_provider(api_key: str, base_url: str, model: str, prompt: str) -> str:
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
         assert api_key == "test-key"
         assert base_url == "https://llm.example.com/v1"
         assert model == "test-model"
+        assert timeout_seconds == 60
         return """# AI-Tailored Resume Draft for Job 1
 
 ## Truthfulness Notes
@@ -383,10 +397,17 @@ def test_ai_tailoring_uses_local_ollama_without_real_api_key(tmp_path, monkeypat
         openai_model="qwen2.5:7b",
     )
 
-    def fake_provider(api_key: str, base_url: str, model: str, prompt: str) -> str:
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
         assert api_key == "ollama"
         assert base_url == "http://localhost:11434/v1"
         assert model == "qwen2.5:7b"
+        assert timeout_seconds == 300
         return """# Candidate
 
 ## Professional Summary
@@ -471,6 +492,7 @@ def test_openai_provider_builds_custom_chat_completions_url(monkeypatch) -> None
 
     def fake_urlopen(request, timeout):
         captured["url"] = request.full_url
+        captured["timeout"] = timeout
         return FakeResponse()
 
     monkeypatch.setattr(tailor_module.urllib.request, "urlopen", fake_urlopen)
@@ -500,6 +522,7 @@ def test_openai_provider_builds_ollama_chat_completions_url(monkeypatch) -> None
 
     def fake_urlopen(request, timeout):
         captured["url"] = request.full_url
+        captured["timeout"] = timeout
         return FakeResponse()
 
     monkeypatch.setattr(tailor_module.urllib.request, "urlopen", fake_urlopen)
@@ -509,9 +532,11 @@ def test_openai_provider_builds_ollama_chat_completions_url(monkeypatch) -> None
         base_url="http://localhost:11434/v1",
         model="qwen2.5:7b",
         prompt="prompt",
+        timeout_seconds=300,
     )
 
     assert captured["url"] == "http://localhost:11434/v1/chat/completions"
+    assert captured["timeout"] == 300
 
 
 def test_real_resume_and_generated_resumes_are_ignored() -> None:
@@ -564,7 +589,10 @@ def _settings(
     openai_api_key: str | None,
     openai_base_url: str = "https://api.openai.com/v1",
     openai_model: str = "test-model",
+    ai_provider_timeout_seconds: int | None = None,
 ) -> Settings:
+    if ai_provider_timeout_seconds is None:
+        ai_provider_timeout_seconds = 300 if "localhost" in openai_base_url else 60
     return Settings(
         gmail_credentials_file=tmp_path / "credentials.json",
         gmail_token_file=tmp_path / "token.json",
@@ -575,4 +603,5 @@ def _settings(
         openai_base_url=openai_base_url,
         openai_model=openai_model,
         ai_tailoring_enabled=ai_tailoring_enabled,
+        ai_provider_timeout_seconds=ai_provider_timeout_seconds,
     )
