@@ -53,6 +53,7 @@ class AITailoringProviderError(ResumeTailoringError):
 class TailoredResumeResult:
     job_id: int
     output_path: Path
+    analysis_path: Path
     matched_keywords: list[str]
     missing_keywords: list[str]
 
@@ -76,6 +77,7 @@ def tailor_resume_for_job(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"job_{job_id}_tailored_resume.md"
+    analysis_path = _analysis_path(output_dir, job_id)
     if output_path.exists() and not overwrite:
         raise TailoredResumeExistsError(
             f"{output_path} already exists. Re-run with --overwrite to replace it."
@@ -84,13 +86,14 @@ def tailor_resume_for_job(
     resume_text = master_resume_path.read_text(encoding="utf-8")
     job_keywords = extract_job_keywords(job["title"], job["description"])
     matched_keywords, missing_keywords = compare_keywords(job_keywords, resume_text)
-    relevant_lines = _rank_resume_lines(resume_text, matched_keywords)
-    draft = _render_tailored_resume(job, resume_text, relevant_lines, matched_keywords, missing_keywords)
+    draft = _render_recruiter_ready_resume(job, resume_text, matched_keywords)
     output_path.write_text(draft, encoding="utf-8")
+    _write_resume_analysis(analysis_path, job, matched_keywords, missing_keywords)
 
     return TailoredResumeResult(
         job_id=job_id,
         output_path=output_path,
+        analysis_path=analysis_path,
         matched_keywords=matched_keywords,
         missing_keywords=missing_keywords,
     )
@@ -126,10 +129,13 @@ def tailor_resume_with_ai_for_job(
     )
 
     output_path = output_dir / f"job_{job_id}_tailored_resume.md"
-    output_path.write_text(_ensure_required_ai_sections(draft, missing_keywords), encoding="utf-8")
+    analysis_path = _analysis_path(output_dir, job_id)
+    output_path.write_text(_prepare_ai_tailored_resume(draft), encoding="utf-8")
+    _write_resume_analysis(analysis_path, job, matched_keywords, missing_keywords)
     return TailoredResumeResult(
         job_id=job_id,
         output_path=output_path,
+        analysis_path=analysis_path,
         matched_keywords=matched_keywords,
         missing_keywords=missing_keywords,
     )
@@ -164,27 +170,29 @@ def build_ai_tailoring_prompt(
     matched_keywords: list[str],
     missing_keywords: list[str],
 ) -> str:
-    missing_section = "\n".join(f"- {term}" for term in missing_keywords) or "- None"
     matched_section = "\n".join(f"- {term}" for term in matched_keywords) or "- None"
+    missing_section = "\n".join(f"- {term}" for term in missing_keywords) or "- None"
     return f"""You are helping create a manual tailored resume draft.
 
 Hard safety rules:
 - Do not fabricate anything.
 - Do not invent companies, dates, roles, tools, metrics, certifications, degrees, or skills.
 - Do not add skills that are not present in the master resume.
+- Do not include phone numbers, email addresses, LinkedIn URLs, or home locations anywhere except the top contact header if they already appear in the master resume.
+- Do not include safety notes, missing keyword sections, keyword analysis, debug notes, or manual editing sections in the resume output.
 - Preserve truthful experience only.
 - Reorder, emphasize, and rewrite existing resume content for relevance.
-- Suggest missing job keywords separately instead of adding them into the resume.
 - Do not auto-apply, send emails, or upload anything.
 
-The output must be Markdown and must include these sections:
-1. # AI-Tailored Resume Draft for Job {job["id"]}
-2. ## Truthfulness Notes
-3. ## Missing Keywords To Review
-4. ## Tailored Resume Draft
+The output must be recruiter-facing Markdown only and must use this structure:
+1. # Name and contact header
+2. ## Professional Summary
+3. ## Core Skills
+4. ## Professional Experience
+5. ## Education
+6. ## Languages
 
-In Truthfulness Notes, explain that the draft only uses information present in the master resume and must be manually reviewed.
-In Missing Keywords To Review, list missing job keywords exactly from the provided missing keyword list.
+Do not include the missing keyword list in the resume. It is provided only so you know what not to claim.
 
 Target job:
 - Title: {job["title"]}
@@ -232,6 +240,10 @@ def _load_tailoring_inputs(
     return job
 
 
+def _analysis_path(output_dir: Path, job_id: int) -> Path:
+    return output_dir / f"job_{job_id}_analysis.md"
+
+
 def _call_openai_compatible_provider(
     api_key: str,
     base_url: str,
@@ -274,18 +286,9 @@ def _call_openai_compatible_provider(
         raise AITailoringProviderError("AI provider response did not include message content.") from exc
 
 
-def _ensure_required_ai_sections(draft: str, missing_keywords: list[str]) -> str:
-    output = draft.strip()
-    if "## Missing Keywords To Review" not in output:
-        missing_section = "\n".join(f"- {term}" for term in missing_keywords) or "- None"
-        output += f"\n\n## Missing Keywords To Review\n\n{missing_section}"
-    if "## Truthfulness Notes" not in output:
-        output += (
-            "\n\n## Truthfulness Notes\n\n"
-            "This draft must be manually reviewed. It should only use experience, skills, "
-            "companies, dates, roles, tools, metrics, and certifications present in the master resume."
-        )
-    return output + "\n"
+def _prepare_ai_tailored_resume(draft: str) -> str:
+    cleaned = _remove_internal_resume_sections(draft)
+    return _remove_body_contact_details(cleaned).strip() + "\n"
 
 
 def _get_job(conn: sqlite3.Connection, job_id: int) -> sqlite3.Row | None:
@@ -314,20 +317,42 @@ def _rank_resume_lines(resume_text: str, matched_keywords: list[str]) -> list[st
     return [line for _, _, line in scored_lines[:12]]
 
 
-def _render_tailored_resume(
+def _render_recruiter_ready_resume(
     job: sqlite3.Row,
     resume_text: str,
-    relevant_lines: list[str],
+    matched_keywords: list[str],
+) -> str:
+    header = _extract_resume_header(resume_text)
+    sections = _extract_resume_sections(resume_text)
+    summary_lines = _select_summary_lines(sections, matched_keywords)
+    skill_lines = _select_skill_lines(sections, matched_keywords)
+    experience_lines = _select_experience_lines(sections, matched_keywords)
+    education_lines = _clean_body_lines(sections.get("education", [])) or ["Not specified in master resume."]
+    language_lines = _clean_body_lines(sections.get("languages", [])) or ["Not specified in master resume."]
+
+    output = "\n\n".join(
+        [
+            header,
+            "## Professional Summary\n\n" + _render_bullets(summary_lines),
+            "## Core Skills\n\n" + _render_bullets(skill_lines),
+            "## Professional Experience\n\n" + _render_bullets(experience_lines),
+            "## Education\n\n" + _render_bullets(education_lines),
+            "## Languages\n\n" + _render_bullets(language_lines),
+        ]
+    )
+    return _remove_body_contact_details(output).strip() + "\n"
+
+
+def _write_resume_analysis(
+    analysis_path: Path,
+    job: sqlite3.Row,
     matched_keywords: list[str],
     missing_keywords: list[str],
-) -> str:
+) -> None:
     matched_section = "\n".join(f"- {term}" for term in matched_keywords) or "- None found"
     missing_section = "\n".join(f"- {term}" for term in missing_keywords) or "- None"
-    relevant_section = "\n".join(f"- {line.lstrip('- ')}" for line in relevant_lines) or (
-        "- No directly matching resume lines found. Review the master resume manually."
-    )
-
-    return f"""# Tailored Resume Draft for Job {job["id"]}
+    analysis_path.write_text(
+        f"""# Resume Tailoring Analysis for Job {job["id"]}
 
 Target role: {job["title"]}
 
@@ -337,32 +362,231 @@ Location: {job["location"] or "Unknown"}
 
 Job URL: {job["url"] or "Not available"}
 
-## Safety Notice
-
-This draft is generated for manual review only. It does not auto-apply, send emails, upload files, or claim skills that were not found in the master resume.
-
-## Relevant Existing Keywords Found in Master Resume
+## Relevant Existing Keywords
 
 {matched_section}
 
-## Missing Job Keywords to Review Manually
-
-These keywords appeared in the job description but were not found in the master resume. Add them only if they are truthful and supported by real experience.
+## Missing Job Keywords
 
 {missing_section}
+""",
+        encoding="utf-8",
+    )
 
-## Relevant Existing Resume Highlights
 
-The lines below are copied or reordered from the master resume based on overlap with the job description.
+def _extract_resume_header(resume_text: str) -> str:
+    lines = [line.strip() for line in resume_text.splitlines() if line.strip()]
+    if not lines:
+        return "# Candidate"
 
-{relevant_section}
+    first_line = lines[0].strip()
+    if first_line.startswith("#"):
+        candidate_name = first_line.lstrip("#").strip()
+    elif _looks_like_name(first_line):
+        candidate_name = first_line
+    else:
+        candidate_name = "Candidate"
+    name = candidate_name if not _is_contact_line(candidate_name) else "Candidate"
+    contact_lines: list[str] = []
+    for line in lines[:10]:
+        clean_line = line.lstrip("- ").strip()
+        if _is_contact_line(clean_line) and clean_line not in contact_lines:
+            contact_lines.append(clean_line)
 
-## Master Resume Content for Manual Editing
+    if contact_lines:
+        return f"# {name}\n\n" + " | ".join(contact_lines)
+    return f"# {name}"
 
-The content below is copied from the master resume. Edit manually before submitting.
 
-{resume_text.rstrip()}
-"""
+def _extract_resume_sections(resume_text: str) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {
+        "summary": [],
+        "skills": [],
+        "experience": [],
+        "education": [],
+        "languages": [],
+        "other": [],
+    }
+    current = "other"
+    for raw_line in resume_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            current = _classify_heading(line)
+            continue
+        sections.setdefault(current, []).append(line)
+    return sections
+
+
+def _classify_heading(line: str) -> str:
+    heading = _normalize(line)
+    if any(term in heading for term in ("summary", "profile", "objective")):
+        return "summary"
+    if any(term in heading for term in ("skill", "technology", "technical")):
+        return "skills"
+    if any(term in heading for term in ("experience", "employment", "work history", "projects")):
+        return "experience"
+    if "education" in heading:
+        return "education"
+    if "language" in heading:
+        return "languages"
+    return "other"
+
+
+def _select_summary_lines(sections: dict[str, list[str]], matched_keywords: list[str]) -> list[str]:
+    summary = _clean_body_lines(sections.get("summary", []))
+    if summary:
+        return summary[:3]
+    relevant = _rank_clean_lines(sections.get("experience", []) + sections.get("other", []), matched_keywords, limit=3)
+    return relevant or ["Professional summary not specified in master resume."]
+
+
+def _select_skill_lines(sections: dict[str, list[str]], matched_keywords: list[str]) -> list[str]:
+    skill_lines = _clean_body_lines(sections.get("skills", []))
+    matched_skill_lines = _rank_clean_lines(skill_lines, matched_keywords, limit=8)
+    resume_body = " ".join(line for lines in sections.values() for line in lines)
+    matched_terms = [term for term in matched_keywords if _contains_term(_normalize(resume_body), term)]
+    formatted_terms = [term.upper() if term in {"aws", "pki", "sre"} else term.title() for term in matched_terms[:12]]
+    combined = _dedupe_lines(formatted_terms + matched_skill_lines + skill_lines[:6])
+    return combined or ["Skills not specified in master resume."]
+
+
+def _select_experience_lines(sections: dict[str, list[str]], matched_keywords: list[str]) -> list[str]:
+    experience = sections.get("experience", []) + sections.get("other", [])
+    ranked = _rank_clean_lines(experience, matched_keywords, limit=14)
+    clean_experience = _clean_body_lines(experience)
+    company_lines = [
+        line
+        for line in clean_experience
+        if any(company in line.lower() for company in ("intact", "morgan stanley", "cognizant"))
+    ]
+    combined = _dedupe_lines(company_lines + ranked + clean_experience[:10])
+    return combined[:18] or ["Professional experience not specified in master resume."]
+
+
+def _rank_clean_lines(lines: list[str], matched_keywords: list[str], limit: int) -> list[str]:
+    scored_lines: list[tuple[int, int, str]] = []
+    for index, line in enumerate(_clean_body_lines(lines)):
+        normalized_line = _normalize(line)
+        score = sum(1 for term in matched_keywords if _contains_term(normalized_line, term))
+        if score:
+            scored_lines.append((score, -index, line))
+    scored_lines.sort(reverse=True)
+    return [line for _, _, line in scored_lines[:limit]]
+
+
+def _clean_body_lines(lines: list[str]) -> list[str]:
+    return _dedupe_lines(
+        clean_line
+        for line in lines
+        if (clean_line := _clean_body_line(line))
+    )
+
+
+def _clean_body_line(line: str) -> str:
+    clean_line = line.strip()
+    if not clean_line or _is_contact_line(clean_line):
+        return ""
+    clean_line = clean_line.lstrip("- ").strip()
+    clean_line = re.sub(r"https?://\S+", "", clean_line)
+    clean_line = re.sub(r"\b[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}\b", "", clean_line)
+    clean_line = re.sub(r"\+?\d[\d\s().-]{7,}\d", "", clean_line)
+    clean_line = re.sub(r"\s+", " ", clean_line).strip(" -|")
+    return clean_line
+
+
+def _dedupe_lines(lines) -> list[str]:
+    seen: set[str] = set()
+    output: list[str] = []
+    for line in lines:
+        clean_line = str(line).strip()
+        key = _normalize(clean_line)
+        if clean_line and key and key not in seen:
+            seen.add(key)
+            output.append(clean_line)
+    return output
+
+
+def _render_bullets(lines: list[str]) -> str:
+    return "\n".join(f"- {line}" for line in lines)
+
+
+def _remove_internal_resume_sections(draft: str) -> str:
+    blocked_headings = (
+        "safety notice",
+        "truthfulness notes",
+        "missing keywords",
+        "missing job keywords",
+        "relevant existing keywords",
+        "relevant existing resume highlights",
+        "master resume content",
+        "missing information warnings",
+        "keyword analysis",
+        "debug",
+        "analysis",
+        "tailored resume draft",
+    )
+    output_lines: list[str] = []
+    skipping = False
+    for line in draft.splitlines():
+        normalized = _normalize(line.lstrip("#").strip())
+        if line.lstrip().startswith("#") and any(blocked in normalized for blocked in blocked_headings):
+            skipping = "tailored resume draft" not in normalized
+            if "tailored resume draft" in normalized:
+                skipping = False
+            continue
+        if skipping and line.lstrip().startswith("#"):
+            skipping = False
+        if not skipping:
+            output_lines.append(line)
+    return "\n".join(output_lines)
+
+
+def _remove_body_contact_details(draft: str) -> str:
+    lines = draft.splitlines()
+    body_started = False
+    output_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            body_started = True
+        if body_started and _is_contact_line(stripped):
+            continue
+        output_lines.append(line)
+    return "\n".join(output_lines)
+
+
+def _is_contact_line(line: str) -> bool:
+    normalized = line.lower()
+    return (
+        bool(re.search(r"\b[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}\b", line))
+        or bool(re.search(r"\+?\d[\d\s().-]{7,}\d", line))
+        or "linkedin.com" in normalized
+        or "github.com" in normalized
+        or any(location in normalized for location in ("montreal", "toronto", "canada", "quebec"))
+    )
+
+
+def _looks_like_name(line: str) -> bool:
+    words = line.strip().split()
+    if not 2 <= len(words) <= 5:
+        return False
+    if any(char in line for char in (":", "|", "@", "/", "\\")):
+        return False
+    normalized = _normalize(line)
+    technical_terms = (
+        "built",
+        "engineer",
+        "developer",
+        "terraform",
+        "kubernetes",
+        "platform",
+        "devops",
+        "security",
+        "resume",
+    )
+    return not any(term in normalized for term in technical_terms)
 
 
 def _normalize(value: str) -> str:

@@ -218,7 +218,13 @@ The output is saved locally:
 data/generated_resumes/job_123_tailored_resume.md
 ```
 
-Generated resumes are ignored by Git. If a generated resume already exists, the command will not overwrite it unless you explicitly pass:
+Internal keyword analysis is saved separately:
+
+```text
+data/generated_resumes/job_123_analysis.md
+```
+
+Generated resumes and analysis files are ignored by Git. If a generated resume already exists, the command will not overwrite it unless you explicitly pass:
 
 ```bash
 job-auto-agent tailor-resume --job-id 123 --overwrite
@@ -228,8 +234,10 @@ The generated draft:
 
 - Extracts important job keywords.
 - Compares job keywords with the master resume.
-- Reorders and emphasizes existing relevant resume lines.
-- Suggests missing job keywords separately.
+- Creates a recruiter-facing resume with Professional Summary, Core Skills, Professional Experience, Education, and Languages sections.
+- Reorders and emphasizes truthful existing content from the master resume.
+- Keeps keyword analysis and missing job keywords in the separate analysis file.
+- Keeps contact details only in the top header when they already exist in the master resume.
 - Does not claim missing skills as experience.
 
 ### AI Tailoring
@@ -263,12 +271,9 @@ job-auto-agent tailor-resume --job-id 123 --ai
 
 If `AI_TAILORING_ENABLED=false`, rule-based tailoring continues to work and AI tailoring shows a clear error. If `OPENAI_API_KEY` is missing, AI tailoring shows a clear error.
 
-AI-generated drafts must include:
+AI-generated resume files are also recruiter-facing only. The app removes internal safety notes, keyword analysis, missing-keyword sections, and contact details outside the top header before saving the resume file. Missing keywords are written to the separate analysis file instead of added as claimed experience.
 
-- `Missing Keywords To Review`
-- `Truthfulness Notes`
-
-The AI prompt explicitly instructs the provider not to fabricate companies, dates, roles, tools, metrics, certifications, skills, or experience. Missing keywords are suggested separately instead of added as claimed experience.
+The AI prompt explicitly instructs the provider not to fabricate companies, dates, roles, tools, metrics, certifications, skills, or experience.
 
 ### Dashboard Usage
 
@@ -279,7 +284,7 @@ In the Streamlit dashboard:
 3. Click **Generate Rule-Based Resume** for local deterministic tailoring.
 4. Click **Generate AI-Tailored Resume** only when AI tailoring is enabled and you want to call the configured AI API.
 5. If a generated resume already exists, check **Overwrite existing generated resume** before regenerating.
-6. Review the generated Markdown file manually before using it.
+6. Review the generated resume and the separate analysis file manually before using it.
 
 ## Cover Letter Generation
 
