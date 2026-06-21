@@ -43,7 +43,7 @@ def main() -> None:
     tailor_parser.add_argument(
         "--ai",
         action="store_true",
-        help="Use AI-assisted tailoring. Requires AI_TAILORING_ENABLED=true and OPENAI_API_KEY.",
+        help="Use AI-assisted tailoring. Requires AI_TAILORING_ENABLED=true and provider settings.",
     )
 
     cover_letter_parser = subparsers.add_parser(

@@ -8,7 +8,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from job_auto_agent.config import Settings
+from job_auto_agent.config import Settings, resolve_openai_api_key
 from job_auto_agent.matching.engine import (
     BROAD_PROFILE_TERMS,
     SECURITY_TERMS,
@@ -105,7 +105,8 @@ def tailor_resume_with_ai_for_job(
         raise AITailoringDisabledError(
             "AI tailoring is disabled. Set AI_TAILORING_ENABLED=true to use --ai."
         )
-    if not settings.openai_api_key:
+    api_key = resolve_openai_api_key(settings)
+    if not api_key:
         raise OpenAIAPIKeyMissingError(
             "OPENAI_API_KEY is missing. Set it in your environment before using --ai."
         )
@@ -116,7 +117,7 @@ def tailor_resume_with_ai_for_job(
     matched_keywords, missing_keywords = compare_keywords(job_keywords, resume_text)
     prompt = build_ai_tailoring_prompt(job, resume_text, matched_keywords, missing_keywords)
     draft = _call_openai_compatible_provider(
-        api_key=settings.openai_api_key,
+        api_key=api_key,
         base_url=settings.openai_base_url,
         model=settings.openai_model,
         prompt=prompt,

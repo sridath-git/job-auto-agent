@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from job_auto_agent.config import Settings
+from job_auto_agent.config import Settings, resolve_openai_api_key
 from job_auto_agent.resume.tailor import (
     AITailoringDisabledError,
     DEFAULT_MASTER_RESUME_PATH,
@@ -72,7 +72,8 @@ def generate_ai_cover_letter_for_job(
         raise AITailoringDisabledError(
             "AI cover letter generation is disabled. Set AI_TAILORING_ENABLED=true to use --ai."
         )
-    if not settings.openai_api_key:
+    api_key = resolve_openai_api_key(settings)
+    if not api_key:
         raise OpenAIAPIKeyMissingError(
             "OPENAI_API_KEY is missing. Set it in your environment before using --ai."
         )
@@ -83,7 +84,7 @@ def generate_ai_cover_letter_for_job(
     warnings = _build_warnings(job, matched_keywords, missing_keywords)
     prompt = _build_ai_cover_letter_prompt(job, resume_text, matched_keywords, missing_keywords)
     draft = _call_openai_compatible_provider(
-        api_key=settings.openai_api_key,
+        api_key=api_key,
         base_url=settings.openai_base_url,
         model=settings.openai_model,
         prompt=prompt,

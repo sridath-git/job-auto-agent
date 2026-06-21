@@ -80,3 +80,61 @@ def test_validate_setup_rejects_web_oauth_client(tmp_path) -> None:
         and "Desktop app" in check.message
         for check in checks
     )
+
+
+def test_validate_setup_allows_localhost_ai_provider_with_dummy_key(tmp_path) -> None:
+    settings = Settings(
+        gmail_credentials_file=tmp_path / "missing.json",
+        gmail_token_file=tmp_path / "token.json",
+        database_url=f"sqlite:///{tmp_path / 'job_auto_agent.db'}",
+        gmail_query="newer_than:30d",
+        match_min_score=35,
+        openai_api_key="ollama",
+        openai_base_url="http://localhost:11434/v1",
+        openai_model="qwen2.5:7b",
+        ai_tailoring_enabled=True,
+    )
+
+    checks = validate_setup(settings)
+    ai_check = next(check for check in checks if check.name == "AI provider")
+
+    assert ai_check.ok
+    assert "Local OpenAI-compatible provider" in ai_check.message
+
+
+def test_validate_setup_requires_api_key_for_openai_cloud(tmp_path) -> None:
+    settings = Settings(
+        gmail_credentials_file=tmp_path / "missing.json",
+        gmail_token_file=tmp_path / "token.json",
+        database_url=f"sqlite:///{tmp_path / 'job_auto_agent.db'}",
+        gmail_query="newer_than:30d",
+        match_min_score=35,
+        openai_api_key=None,
+        openai_base_url="https://api.openai.com/v1",
+        ai_tailoring_enabled=True,
+    )
+
+    checks = validate_setup(settings)
+    ai_check = next(check for check in checks if check.name == "AI provider")
+
+    assert not ai_check.ok
+    assert "OPENAI_API_KEY is required" in ai_check.message
+
+
+def test_validate_setup_rejects_ollama_dummy_key_for_openai_cloud(tmp_path) -> None:
+    settings = Settings(
+        gmail_credentials_file=tmp_path / "missing.json",
+        gmail_token_file=tmp_path / "token.json",
+        database_url=f"sqlite:///{tmp_path / 'job_auto_agent.db'}",
+        gmail_query="newer_than:30d",
+        match_min_score=35,
+        openai_api_key="ollama",
+        openai_base_url="https://api.openai.com/v1",
+        ai_tailoring_enabled=True,
+    )
+
+    checks = validate_setup(settings)
+    ai_check = next(check for check in checks if check.name == "AI provider")
+
+    assert not ai_check.ok
+    assert "real OpenAI API key" in ai_check.message

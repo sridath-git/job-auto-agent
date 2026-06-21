@@ -4,7 +4,13 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from job_auto_agent.config import Settings
+from job_auto_agent.config import (
+    Settings,
+    is_dummy_local_api_key,
+    is_local_openai_base_url,
+    is_openai_cloud_base_url,
+    resolve_openai_api_key,
+)
 from job_auto_agent.gmail.auth import SCOPES
 
 
@@ -20,6 +26,7 @@ def validate_setup(settings: Settings) -> list[ValidationCheck]:
         _check_database_url(settings),
         _check_sqlite_directory(settings),
         _check_gmail_query(settings),
+        _check_ai_provider(settings),
         _check_credentials_file(settings.gmail_credentials_file),
         _check_token_file(settings.gmail_token_file),
     ]
@@ -56,6 +63,44 @@ def _check_gmail_query(settings: Settings) -> ValidationCheck:
     if not settings.gmail_query.strip():
         return ValidationCheck("GMAIL_QUERY", False, "GMAIL_QUERY must not be empty.")
     return ValidationCheck("GMAIL_QUERY", True, "Gmail search query is configured.")
+
+
+def _check_ai_provider(settings: Settings) -> ValidationCheck:
+    if not settings.ai_tailoring_enabled:
+        return ValidationCheck(
+            "AI provider",
+            True,
+            "AI tailoring is disabled; provider settings are optional.",
+        )
+
+    if is_local_openai_base_url(settings.openai_base_url):
+        key_message = "dummy OPENAI_API_KEY is allowed" if settings.openai_api_key else "using local dummy key"
+        return ValidationCheck(
+            "AI provider",
+            True,
+            f"Local OpenAI-compatible provider configured at {settings.openai_base_url}; {key_message}.",
+        )
+
+    resolved_api_key = resolve_openai_api_key(settings)
+    if not resolved_api_key:
+        return ValidationCheck(
+            "AI provider",
+            False,
+            "OPENAI_API_KEY is required when OPENAI_BASE_URL is not localhost or 127.0.0.1.",
+        )
+
+    if is_openai_cloud_base_url(settings.openai_base_url) and is_dummy_local_api_key(resolved_api_key):
+        return ValidationCheck(
+            "AI provider",
+            False,
+            "OPENAI_API_KEY must be a real OpenAI API key when OPENAI_BASE_URL uses OpenAI cloud.",
+        )
+
+    return ValidationCheck(
+        "AI provider",
+        True,
+        f"OpenAI-compatible provider configured at {settings.openai_base_url}.",
+    )
 
 
 def _check_credentials_file(credentials_file: Path) -> ValidationCheck:
