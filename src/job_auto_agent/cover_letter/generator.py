@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,7 @@ class CoverLetterJobNotFoundError(CoverLetterGenerationError):
 class CoverLetterResult:
     job_id: int
     output_path: Path
+    analysis_path: Path
     missing_keywords: list[str]
     warnings: list[str]
 
@@ -48,9 +50,12 @@ def generate_cover_letter_for_job(
     output_path = _output_path(output_dir, job_id)
     letter = _render_rule_based_cover_letter(job, resume_text, matched_keywords, missing_keywords, warnings)
     output_path.write_text(letter, encoding="utf-8")
+    analysis_path = _analysis_path(output_dir, job_id)
+    _write_analysis(analysis_path, job, matched_keywords, missing_keywords, warnings)
     return CoverLetterResult(
         job_id=job_id,
         output_path=output_path,
+        analysis_path=analysis_path,
         missing_keywords=missing_keywords,
         warnings=warnings,
     )
@@ -84,10 +89,13 @@ def generate_ai_cover_letter_for_job(
         prompt=prompt,
     )
     output_path = _output_path(output_dir, job_id)
-    output_path.write_text(_ensure_ai_cover_letter_sections(draft, missing_keywords), encoding="utf-8")
+    output_path.write_text(_prepare_ai_cover_letter_output(draft), encoding="utf-8")
+    analysis_path = _analysis_path(output_dir, job_id)
+    _write_analysis(analysis_path, job, matched_keywords, missing_keywords, warnings)
     return CoverLetterResult(
         job_id=job_id,
         output_path=output_path,
+        analysis_path=analysis_path,
         missing_keywords=missing_keywords,
         warnings=warnings,
     )
@@ -115,6 +123,11 @@ def _load_cover_letter_inputs(
 def _output_path(output_dir: Path, job_id: int) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir / f"job_{job_id}_cover_letter.md"
+
+
+def _analysis_path(output_dir: Path, job_id: int) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir / f"job_{job_id}_analysis.md"
 
 
 def _keyword_overlap(job: sqlite3.Row, resume_text: str) -> tuple[list[str], list[str]]:
@@ -147,56 +160,29 @@ def _render_rule_based_cover_letter(
     company = job["company"] or "your team"
     relevant_terms = _select_relevant_terms(matched_keywords)
     relevant_phrase = _human_join(relevant_terms) if relevant_terms else "relevant engineering experience"
-    highlights = _select_resume_highlights(resume_text, matched_keywords)
-    highlight_sentence = " ".join(highlights[:3]) if highlights else (
-        "My background includes production engineering, automation, reliability, and security work "
-        "described in my master resume."
-    )
-    missing_section = "\n".join(f"- {term}" for term in missing_keywords) or "- None"
-    warning_section = "\n".join(f"- {warning}" for warning in warnings) or "- None"
+    highlights = _select_resume_highlights(resume_text, matched_keywords, limit=3)
+    company_context = _company_context(resume_text)
+    highlight_sentence = _highlight_sentence(highlights)
+    role_focus = _role_focus_sentence(matched_keywords)
 
-    return f"""# Cover Letter Draft for Job {job["id"]}
-
-Target role: {job["title"]}
-
-Company: {company}
-
-## Cover Letter
-
+    letter = f"""
 Dear Hiring Team,
 
-I am writing to express my interest in the {job["title"]} role at {company}. My background aligns well with this opportunity through hands-on experience in {relevant_phrase}. I have focused on building, operating, and improving reliable production platforms while keeping security, automation, and operational clarity at the center of the work.
+I am writing to express my interest in the {job["title"]} role at {company}. The opportunity stands out because it aligns with the platform, reliability, cloud, and security engineering work I have focused on throughout my career. I enjoy roles where dependable systems, secure automation, and practical operational improvements directly support engineering teams and production outcomes.
 
-{highlight_sentence}
+My experience includes {relevant_phrase}, with hands-on work across DevOps, DevSecOps, SRE, Cloud, Kubernetes, CI/CD, Platform Engineering, PKI, Security, and Reliability where those areas are reflected in my resume. {company_context} {highlight_sentence}
 
-The role appears to call for a practical mix of engineering ownership, production judgment, and cross-functional execution. I can bring experience across DevOps, DevSecOps, SRE, Cloud, Kubernetes, CI/CD, Platform Engineering, PKI, Security, and Reliability where those areas are supported by my master resume. I value clear runbooks, measurable reliability improvements, secure automation, and collaboration with application, security, and infrastructure teams.
+What I would bring to this role is a balance of production judgment and delivery focus. I am comfortable working across infrastructure as code, deployment automation, observability, incident response, secrets and certificate practices, and secure platform operations. {role_focus}
 
-What interests me most about this opportunity is the chance to apply hands-on platform and reliability experience to problems that matter in production. I am comfortable working across incident response, infrastructure as code, deployment automation, observability, certificate and secrets practices, and secure delivery workflows. I would approach this role with a bias toward dependable systems, thoughtful documentation, and practical improvements that reduce operational risk.
+I am especially interested in contributing to {company} because the role appears to require someone who can connect reliability, security, and platform execution rather than treating them as separate concerns. I would bring a practical mindset, strong ownership, and the ability to collaborate across application, infrastructure, and security teams.
 
-I would be glad to discuss how my background can help {company} strengthen its platforms, improve delivery workflows, and support secure, reliable operations.
-
-Thank you for your time and consideration. I look forward to the opportunity to speak with you.
+Thank you for your time and consideration. I would welcome the opportunity to discuss how my background can help {company} strengthen its platforms, improve delivery workflows, and support secure, reliable operations.
 
 Sincerely,
 
 Sridath Jeelugula
-
-## Missing Information Warnings
-
-{warning_section}
-
-## Missing Keywords To Review
-
-These job keywords were not found in the master resume and were not added as claimed experience:
-
-{missing_section}
-
-## Safety Notes
-
-- This draft is for manual review only.
-- It does not auto-apply, send emails, or upload files.
-- It only emphasizes information found in the local master resume.
 """
+    return _sanitize_cover_letter_text(letter)
 
 
 def _build_ai_cover_letter_prompt(
@@ -207,7 +193,7 @@ def _build_ai_cover_letter_prompt(
 ) -> str:
     matched_section = "\n".join(f"- {term}" for term in matched_keywords) or "- None"
     missing_section = "\n".join(f"- {term}" for term in missing_keywords) or "- None"
-    return f"""Generate a professional 250-400 word cover letter in Markdown.
+    return f"""Generate a professional 250-400 word recruiter-ready cover letter in Markdown.
 
 Hard safety rules:
 - Do not fabricate experience.
@@ -218,12 +204,16 @@ Hard safety rules:
 - Only use information from master_resume.md.
 - Do not auto-apply, send emails, or upload files.
 - Do not claim missing job keywords as experience.
+- Do not include phone numbers, email addresses, LinkedIn URLs, home location, safety notes, debug sections, keyword analysis sections, Missing Keywords sections, or Missing Information Warnings sections.
 
-The output must include these Markdown sections:
-1. # Cover Letter Draft for Job {job["id"]}
-2. ## Cover Letter
-3. ## Missing Keywords To Review
-4. ## Truthfulness Notes
+The output must contain only recruiter-facing cover letter content.
+
+Structure the letter naturally with:
+- Introduction
+- Why I am interested
+- Relevant experience
+- Why I fit the role
+- Closing
 
 Target job:
 - Title: {job["title"]}
@@ -245,18 +235,8 @@ Master resume:
 """
 
 
-def _ensure_ai_cover_letter_sections(draft: str, missing_keywords: list[str]) -> str:
-    output = draft.strip()
-    if "## Missing Keywords To Review" not in output:
-        missing_section = "\n".join(f"- {term}" for term in missing_keywords) or "- None"
-        output += f"\n\n## Missing Keywords To Review\n\n{missing_section}"
-    if "## Truthfulness Notes" not in output:
-        output += (
-            "\n\n## Truthfulness Notes\n\n"
-            "This draft must be manually reviewed. It should only use information present "
-            "in the local master resume."
-        )
-    return output + "\n"
+def _prepare_ai_cover_letter_output(draft: str) -> str:
+    return _sanitize_cover_letter_text(_remove_internal_sections(draft))
 
 
 def _select_relevant_terms(matched_keywords: list[str]) -> list[str]:
@@ -277,17 +257,21 @@ def _select_relevant_terms(matched_keywords: list[str]) -> list[str]:
     return selected[:8]
 
 
-def _select_resume_highlights(resume_text: str, matched_keywords: list[str]) -> list[str]:
+def _select_resume_highlights(
+    resume_text: str,
+    matched_keywords: list[str],
+    limit: int = 4,
+) -> list[str]:
     highlights: list[str] = []
     lowered_keywords = [term.lower() for term in matched_keywords]
     for raw_line in resume_text.splitlines():
         line = raw_line.strip().lstrip("- ").strip()
-        if not line or line.startswith("#"):
+        if not line or line.startswith("#") or _contains_contact_info(line):
             continue
         lowered_line = line.lower()
         if any(term in lowered_line for term in lowered_keywords):
-            highlights.append(line.rstrip(".") + ".")
-    return highlights[:4]
+            highlights.append(_sanitize_sentence(line.rstrip(".") + "."))
+    return highlights[:limit]
 
 
 def _human_join(terms: list[str]) -> str:
@@ -295,3 +279,125 @@ def _human_join(terms: list[str]) -> str:
     if len(titled_terms) == 1:
         return titled_terms[0]
     return ", ".join(titled_terms[:-1]) + f", and {titled_terms[-1]}"
+
+
+def _company_context(resume_text: str) -> str:
+    companies = [
+        company
+        for company in ("Intact", "Morgan Stanley", "Cognizant")
+        if re.search(rf"\b{re.escape(company)}\b", resume_text, flags=re.IGNORECASE)
+    ]
+    if not companies:
+        return "My resume reflects experience across production engineering environments."
+    return "My resume includes experience with " + _human_join(companies) + "."
+
+
+def _highlight_sentence(highlights: list[str]) -> str:
+    if not highlights:
+        return (
+            "That experience includes operating production platforms, improving automation, "
+            "and supporting reliable engineering workflows."
+        )
+    return " ".join(highlights)
+
+
+def _role_focus_sentence(matched_keywords: list[str]) -> str:
+    focus_terms = _select_relevant_terms(matched_keywords)
+    if not focus_terms:
+        return "I would use that background to help improve platform quality and operational confidence."
+    return (
+        "I would use that background to contribute quickly in areas such as "
+        f"{_human_join(focus_terms[:5])}."
+    )
+
+
+def _write_analysis(
+    analysis_path: Path,
+    job: sqlite3.Row,
+    matched_keywords: list[str],
+    missing_keywords: list[str],
+    warnings: list[str],
+) -> None:
+    matched_section = "\n".join(f"- {term}" for term in matched_keywords) or "- None"
+    missing_section = "\n".join(f"- {term}" for term in missing_keywords) or "- None"
+    warning_section = "\n".join(f"- {warning}" for warning in warnings) or "- None"
+    analysis_path.write_text(
+        f"""# Cover Letter Analysis for Job {job["id"]}
+
+Target role: {job["title"]}
+
+Company: {job["company"] or "Unknown"}
+
+## Matched Keywords
+
+{matched_section}
+
+## Missing Keywords To Review
+
+{missing_section}
+
+## Missing Information Warnings
+
+{warning_section}
+""",
+        encoding="utf-8",
+    )
+
+
+def _remove_internal_sections(text: str) -> str:
+    stop_headings = {
+        "Missing Keywords To Review",
+        "Missing Information Warnings",
+        "Safety Notes",
+        "Truthfulness Notes",
+        "Debug",
+        "Keyword Analysis",
+    }
+    lines: list[str] = []
+    skipping = False
+    for line in text.splitlines():
+        stripped = line.strip().lstrip("#").strip()
+        if stripped in stop_headings:
+            skipping = True
+            continue
+        if skipping and line.strip().startswith("#"):
+            stripped_heading = line.strip().lstrip("#").strip()
+            skipping = stripped_heading in stop_headings
+            if skipping:
+                continue
+        if not skipping:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _sanitize_cover_letter_text(text: str) -> str:
+    sanitized_lines = [
+        _sanitize_sentence(line)
+        for line in text.splitlines()
+        if not _contains_contact_info(line) and not _is_internal_heading(line)
+    ]
+    sanitized = "\n".join(sanitized_lines)
+    sanitized = re.sub(r"\n{3,}", "\n\n", sanitized).strip()
+    return sanitized + "\n"
+
+
+def _sanitize_sentence(text: str) -> str:
+    text = re.sub(r"https?://\S+", "", text)
+    text = re.sub(r"\b[\w.\-+]+@[\w.\-]+\.\w+\b", "", text)
+    text = re.sub(r"(?:\+?\d[\d\s().-]{7,}\d)", "", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip()
+
+
+def _contains_contact_info(text: str) -> bool:
+    lowered = text.lower()
+    return bool(
+        re.search(r"https?://|linkedin\.com|[\w.\-+]+@[\w.\-]+\.\w+|(?:\+?\d[\d\s().-]{7,}\d)", text)
+        or "montreal" in lowered
+        or "home location" in lowered
+    )
+
+
+def _is_internal_heading(text: str) -> bool:
+    stripped = text.strip().lstrip("#").strip().lower()
+    return stripped.startswith("cover letter draft for job")
