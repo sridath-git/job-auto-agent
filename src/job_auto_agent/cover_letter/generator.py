@@ -28,6 +28,10 @@ class CoverLetterJobNotFoundError(CoverLetterGenerationError):
     """Raised when a job ID does not exist in SQLite."""
 
 
+class CoverLetterValidationError(CoverLetterGenerationError):
+    """Raised when generated cover letter content fails safety validation."""
+
+
 @dataclass(frozen=True)
 class CoverLetterResult:
     job_id: int
@@ -82,7 +86,17 @@ def generate_ai_cover_letter_for_job(
     resume_text = master_resume_path.read_text(encoding="utf-8")
     matched_keywords, missing_keywords = _keyword_overlap(job, resume_text)
     warnings = _build_warnings(job, matched_keywords, missing_keywords)
-    prompt = _build_ai_cover_letter_prompt(job, resume_text, matched_keywords, missing_keywords)
+    candidate_name = _extract_candidate_name(resume_text)
+    recruiter_sender = job["sender"] if "sender" in job.keys() else None
+    recruiter_name = _extract_recruiter_name(recruiter_sender)
+    prompt = _build_ai_cover_letter_prompt(
+        job,
+        resume_text,
+        matched_keywords,
+        missing_keywords,
+        candidate_name,
+        recruiter_name,
+    )
     draft = _call_openai_compatible_provider(
         api_key=api_key,
         base_url=settings.openai_base_url,
@@ -90,8 +104,11 @@ def generate_ai_cover_letter_for_job(
         prompt=prompt,
         timeout_seconds=settings.ai_provider_timeout_seconds,
     )
+    _validate_raw_cover_letter_signature(draft, recruiter_name, recruiter_sender)
     output_path = _output_path(output_dir, job_id)
-    output_path.write_text(_prepare_ai_cover_letter_output(draft), encoding="utf-8")
+    letter = _prepare_ai_cover_letter_output(draft, resume_text, recruiter_name)
+    _validate_cover_letter_identity(letter, candidate_name, recruiter_name, recruiter_sender)
+    output_path.write_text(letter, encoding="utf-8")
     analysis_path = _analysis_path(output_dir, job_id)
     _write_analysis(analysis_path, job, matched_keywords, missing_keywords, warnings)
     return CoverLetterResult(
@@ -109,7 +126,12 @@ def _load_cover_letter_inputs(
     master_resume_path: Path,
 ) -> sqlite3.Row:
     job = conn.execute(
-        "SELECT * FROM job_opportunities WHERE id = ?",
+        """
+        SELECT j.*, e.sender
+        FROM job_opportunities j
+        LEFT JOIN email_messages e ON e.gmail_id = j.source_message_id
+        WHERE j.id = ?
+        """,
         (job_id,),
     ).fetchone()
     if job is None:
@@ -192,6 +214,8 @@ def _build_ai_cover_letter_prompt(
     resume_text: str,
     matched_keywords: list[str],
     missing_keywords: list[str],
+    candidate_name: str = "Sridath Jeelugula",
+    recruiter_name: str | None = None,
 ) -> str:
     matched_section = "\n".join(f"- {term}" for term in matched_keywords) or "- None"
     missing_section = "\n".join(f"- {term}" for term in missing_keywords) or "- None"
@@ -207,6 +231,14 @@ Hard safety rules:
 - Do not auto-apply, send emails, or upload files.
 - Do not claim missing job keywords as experience.
 - Do not include phone numbers, email addresses, LinkedIn URLs, home location, safety notes, debug sections, keyword analysis sections, Missing Keywords sections, or Missing Information Warnings sections.
+- Candidate identity must come only from master_resume.md.
+- Applicant/candidate name is: {candidate_name}.
+- Recruiter identity must never be used as applicant name, applicant signature, applicant email, or applicant contact info.
+- If recruiter name is known, greet them as: Dear {recruiter_name or "Hiring Manager"},
+- Signature must always be exactly:
+  Sincerely,
+
+  {candidate_name}
 
 The output must contain only recruiter-facing cover letter content.
 
@@ -222,6 +254,7 @@ Target job:
 - Company: {job["company"] or "Unknown"}
 - Location: {job["location"] or "Unknown"}
 - URL: {job["url"] or "Not available"}
+- Recruiter name: {recruiter_name or "Unknown"}
 
 Job description:
 {job["description"]}
@@ -237,8 +270,118 @@ Master resume:
 """
 
 
-def _prepare_ai_cover_letter_output(draft: str) -> str:
-    return _sanitize_cover_letter_text(_remove_internal_sections(draft))
+def _prepare_ai_cover_letter_output(
+    draft: str,
+    resume_text: str | None = None,
+    recruiter_name: str | None = None,
+) -> str:
+    candidate_name = _extract_candidate_name(resume_text or "")
+    sanitized = _sanitize_cover_letter_text(_remove_internal_sections(_strip_code_fences(draft)))
+    sanitized = _ensure_cover_letter_greeting(sanitized, recruiter_name)
+    sanitized = _ensure_candidate_signature(sanitized, candidate_name)
+    return sanitized
+
+
+def _extract_candidate_name(resume_text: str) -> str:
+    for raw_line in resume_text.splitlines():
+        line = raw_line.strip().lstrip("#").strip()
+        if line:
+            return line
+    return "Sridath Jeelugula"
+
+
+def _extract_recruiter_name(sender: str | None) -> str | None:
+    if not sender:
+        return None
+    name = sender.split("<", maxsplit=1)[0].strip().strip('"')
+    if not name or "@" in name:
+        return None
+    blocked_words = {"recruiter", "jobs", "careers", "talent", "hiring", "team"}
+    if name.lower() in blocked_words:
+        return None
+    return name
+
+
+def _ensure_cover_letter_greeting(text: str, recruiter_name: str | None) -> str:
+    greeting = f"Dear {recruiter_name}," if recruiter_name else "Dear Hiring Manager,"
+    lines = [line for line in text.splitlines()]
+    first_content_index = next((index for index, line in enumerate(lines) if line.strip()), None)
+    if first_content_index is None:
+        return greeting + "\n\n"
+    if re.match(r"^\s*Dear\s+.+,\s*$", lines[first_content_index], flags=re.IGNORECASE):
+        lines[first_content_index] = greeting
+    else:
+        lines.insert(first_content_index, greeting)
+        lines.insert(first_content_index + 1, "")
+    return "\n".join(lines).strip() + "\n"
+
+
+def _ensure_candidate_signature(text: str, candidate_name: str) -> str:
+    lines = [line.rstrip() for line in text.splitlines()]
+    signature_index = next(
+        (index for index, line in enumerate(lines) if line.strip().lower() in {"sincerely,", "sincerely"}),
+        None,
+    )
+    if signature_index is None:
+        body = "\n".join(lines).rstrip()
+        return f"{body}\n\nSincerely,\n\n{candidate_name}\n"
+    return "\n".join(lines[:signature_index]).rstrip() + f"\n\nSincerely,\n\n{candidate_name}\n"
+
+
+def _validate_cover_letter_identity(
+    letter: str,
+    candidate_name: str,
+    recruiter_name: str | None,
+    recruiter_sender: str | None,
+) -> None:
+    signature = _signature_block(letter)
+    if candidate_name not in signature:
+        raise CoverLetterValidationError("AI cover letter failed validation: candidate signature is missing.")
+    forbidden_values = [
+        value
+        for value in (
+            recruiter_name,
+            _extract_email(recruiter_sender or ""),
+            recruiter_sender,
+        )
+        if value
+    ]
+    forbidden_in_signature = [value for value in forbidden_values if value in signature and value != candidate_name]
+    if forbidden_in_signature:
+        raise CoverLetterValidationError(
+            "AI cover letter failed validation: recruiter identity appears in signature."
+        )
+
+
+def _validate_raw_cover_letter_signature(
+    draft: str,
+    recruiter_name: str | None,
+    recruiter_sender: str | None,
+) -> None:
+    signature = _signature_block(draft)
+    forbidden_values = [
+        value
+        for value in (
+            recruiter_name,
+            _extract_email(recruiter_sender or ""),
+            recruiter_sender,
+        )
+        if value
+    ]
+    if any(value in signature for value in forbidden_values):
+        raise CoverLetterValidationError(
+            "AI cover letter failed validation: recruiter identity appears in signature."
+        )
+
+
+def _signature_block(letter: str) -> str:
+    match = re.search(r"(?is)\bSincerely,?\s*(.*)$", letter)
+    return match.group(0) if match else ""
+
+
+def _extract_email(text: str) -> str:
+    match = re.search(r"[\w.\-+]+@[\w.\-]+\.\w+", text)
+    return match.group(0) if match else ""
 
 
 def _select_relevant_terms(matched_keywords: list[str]) -> list[str]:
@@ -370,6 +513,18 @@ def _remove_internal_sections(text: str) -> str:
         if not skipping:
             lines.append(line)
     return "\n".join(lines)
+
+
+def _strip_code_fences(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        return "\n".join(lines)
+    return text.replace("```markdown", "").replace("```", "")
 
 
 def _sanitize_cover_letter_text(text: str) -> str:

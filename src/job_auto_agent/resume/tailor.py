@@ -124,9 +124,12 @@ def tailor_resume_with_ai_for_job(
         timeout_seconds=settings.ai_provider_timeout_seconds,
     )
 
+    prepared_resume = _prepare_ai_tailored_resume(draft, resume_text)
+    _validate_ai_tailored_resume(prepared_resume, resume_text)
+
     output_path = output_dir / f"job_{job_id}_tailored_resume.md"
     analysis_path = _analysis_path(output_dir, job_id)
-    output_path.write_text(_prepare_ai_tailored_resume(draft), encoding="utf-8")
+    output_path.write_text(prepared_resume, encoding="utf-8")
     _write_resume_analysis(analysis_path, job, matched_keywords, missing_keywords)
     return TailoredResumeResult(
         job_id=job_id,
@@ -176,14 +179,20 @@ Hard safety rules:
 - Do not add skills that are not present in the master resume.
 - Do not include phone numbers, email addresses, LinkedIn URLs, or home locations anywhere except the top contact header if they already appear in the master resume.
 - Do not include safety notes, missing keyword sections, keyword analysis, debug notes, or manual editing sections in the resume output.
+- Do not wrap the output in Markdown code fences.
+- Do not include an Overview section.
 - Preserve truthful experience only.
 - Reorder, emphasize, and rewrite existing resume content for relevance.
+- Preserve the candidate header exactly from the master resume, including name, professional title line, location, phone number, email address, and LinkedIn URL.
+- Preserve every company name, role title, role location, and employment timeline exactly as shown in the master resume.
+- Preserve education exactly as shown in the master resume.
+- Preserve languages exactly as shown in the master resume.
 - Do not auto-apply, send emails, or upload anything.
 
 The output must be recruiter-facing Markdown only and must use this structure:
 1. # Name and contact header
 2. ## Professional Summary
-3. ## Core Skills
+3. ## Core Skills & Tool Stack
 4. ## Professional Experience
 5. ## Education
 6. ## Languages
@@ -283,9 +292,53 @@ def _call_openai_compatible_provider(
         raise AITailoringProviderError("AI provider response did not include message content.") from exc
 
 
-def _prepare_ai_tailored_resume(draft: str) -> str:
-    cleaned = _remove_internal_resume_sections(draft)
-    return _remove_body_contact_details(cleaned).strip() + "\n"
+def _prepare_ai_tailored_resume(draft: str, resume_text: str | None = None) -> str:
+    cleaned = _strip_markdown_code_fences(draft)
+    cleaned = _remove_internal_resume_sections(cleaned)
+    cleaned = _remove_body_contact_details(cleaned)
+    if resume_text:
+        cleaned = _apply_master_resume_header(cleaned, resume_text)
+        cleaned = _normalize_resume_section_headings(cleaned)
+    return cleaned.strip() + "\n"
+
+
+def _validate_ai_tailored_resume(output: str, resume_text: str) -> None:
+    required_values = _required_resume_values(resume_text)
+    missing = [
+        label
+        for label, expected_value in required_values
+        if expected_value and expected_value not in output
+    ]
+    lowered_output = output.lower()
+    if "```" in output:
+        missing.append("code fences removed")
+    if re.search(r"^##\s+Overview\s*$", output, flags=re.IGNORECASE | re.MULTILINE):
+        missing.append("Overview section removed")
+    if missing:
+        raise AITailoringProviderError(
+            "AI resume output failed validation; missing or invalid content: "
+            + ", ".join(dict.fromkeys(missing))
+        )
+    blocked_headings = (
+        "safety notes",
+        "safety notice",
+        "missing keywords",
+        "truthfulness notes",
+        "debug",
+        "keyword analysis",
+        "analysis",
+        "overview",
+    )
+    blocked_present = [
+        term
+        for term in blocked_headings
+        if re.search(rf"^#+\s+{re.escape(term)}\s*$", lowered_output, flags=re.MULTILINE)
+    ]
+    if blocked_present:
+        raise AITailoringProviderError(
+            "AI resume output failed validation; internal section present: "
+            + ", ".join(blocked_present)
+        )
 
 
 def _get_job(conn: sqlite3.Connection, job_id: int) -> sqlite3.Row | None:
@@ -513,6 +566,7 @@ def _remove_internal_resume_sections(draft: str) -> str:
     blocked_headings = (
         "safety notice",
         "truthfulness notes",
+        "overview",
         "missing keywords",
         "missing job keywords",
         "relevant existing keywords",
@@ -540,6 +594,136 @@ def _remove_internal_resume_sections(draft: str) -> str:
     return "\n".join(output_lines)
 
 
+def _strip_markdown_code_fences(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        return "\n".join(lines)
+    return text.replace("```markdown", "").replace("```", "")
+
+
+def _apply_master_resume_header(draft: str, resume_text: str) -> str:
+    header_lines = _extract_required_header_lines(resume_text)
+    if not header_lines:
+        return draft
+    lines = draft.splitlines()
+    first_section_index = next(
+        (index for index, line in enumerate(lines) if line.strip().lower().startswith("## professional summary")),
+        None,
+    )
+    body_lines = lines[first_section_index:] if first_section_index is not None else lines
+    header = "\n".join(header_lines)
+    return header + "\n\n" + "\n".join(body_lines).lstrip()
+
+
+def _normalize_resume_section_headings(draft: str) -> str:
+    lines: list[str] = []
+    for line in draft.splitlines():
+        heading = line.strip().lower()
+        if heading == "## core skills":
+            lines.append("## Core Skills & Tool Stack")
+        elif heading == "## overview":
+            continue
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _required_resume_values(resume_text: str) -> list[tuple[str, str]]:
+    required: list[tuple[str, str]] = []
+    for line in _extract_required_header_lines(resume_text):
+        clean_line = line.lstrip("#").strip()
+        if clean_line:
+            required.append((f"header line '{clean_line}'", clean_line))
+
+    for line in _extract_required_experience_lines(resume_text):
+        required.append((f"company timeline '{line}'", line))
+
+    education_line = _find_line_containing(
+        resume_text,
+        "Master of Engineering (Quality Systems Engineering), Concordia University, Montreal",
+    )
+    if education_line:
+        required.append(("education", education_line))
+
+    languages_line = _find_line_containing(resume_text, "English | Telugu | Hindi")
+    if languages_line:
+        required.append(("languages", languages_line))
+
+    return required
+
+
+def _extract_required_header_lines(resume_text: str) -> list[str]:
+    lines = [line.rstrip() for line in resume_text.splitlines()]
+    header_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if header_lines:
+                continue
+            continue
+        normalized = _normalize(stripped)
+        if stripped.startswith("##") or normalized in {
+            "professional summary",
+            "summary",
+            "core skills",
+            "core skills tool stack",
+            "professional experience",
+            "experience",
+            "education",
+            "languages",
+        }:
+            break
+        if stripped.startswith("# "):
+            header_lines.append(stripped)
+            continue
+        if _is_contact_line(stripped) or _looks_like_name(stripped) or _looks_like_professional_title(stripped):
+            header_lines.append(stripped)
+    return _dedupe_lines(header_lines)
+
+
+def _extract_required_experience_lines(resume_text: str) -> list[str]:
+    required_lines: list[str] = []
+    for raw_line in resume_text.splitlines():
+        line = raw_line.strip().lstrip("- ").strip()
+        if not line:
+            continue
+        normalized = _normalize(line)
+        if any(
+            company in normalized
+            for company in (
+                "intact financial corporation",
+                "morgan stanley",
+                "cognizant technology solutions",
+                "virtusa consulting services",
+            )
+        ) and _has_timeline(line):
+            required_lines.append(line)
+    return _dedupe_lines(required_lines)
+
+
+def _find_line_containing(resume_text: str, expected: str) -> str:
+    normalized_expected = _normalize(expected)
+    for raw_line in resume_text.splitlines():
+        line = raw_line.strip().lstrip("- ").strip()
+        if _normalize(line) == normalized_expected:
+            return line
+    return ""
+
+
+def _has_timeline(line: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sept|Sep|Oct|Nov|Dec)\s+\d{4}\s+[–-]\s+(?:Present|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sept|Sep|Oct|Nov|Dec)\s+\d{4})\b",
+            line,
+        )
+    )
+
+
 def _remove_body_contact_details(draft: str) -> str:
     lines = draft.splitlines()
     body_started = False
@@ -548,10 +732,23 @@ def _remove_body_contact_details(draft: str) -> str:
         stripped = line.strip()
         if stripped.startswith("## "):
             body_started = True
-        if body_started and _is_contact_line(stripped):
+        if body_started and _is_standalone_contact_line(stripped):
             continue
         output_lines.append(line)
     return "\n".join(output_lines)
+
+
+def _is_standalone_contact_line(line: str) -> bool:
+    if not line:
+        return False
+    if re.search(r"\b[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}\b", line):
+        return True
+    if re.search(r"https?://|linkedin\.com|github\.com", line, flags=re.IGNORECASE):
+        return True
+    if re.fullmatch(r"(?:phone|mobile|tel|email|linkedin|location)?[:\s|+-]*[\d\s().-]{7,}", line, flags=re.IGNORECASE):
+        return True
+    normalized = line.lower().strip(" -|")
+    return normalized in {"montreal", "montreal, qc", "montreal, quebec", "montreal, canada"}
 
 
 def _is_contact_line(line: str) -> bool:
@@ -584,6 +781,21 @@ def _looks_like_name(line: str) -> bool:
         "resume",
     )
     return not any(term in normalized for term in technical_terms)
+
+
+def _looks_like_professional_title(line: str) -> bool:
+    normalized = _normalize(line)
+    title_terms = (
+        "engineer",
+        "devsecops",
+        "sre",
+        "site reliability",
+        "platform",
+        "security",
+        "cloud",
+        "devops",
+    )
+    return any(term in normalized for term in title_terms) and not _has_timeline(line)
 
 
 def _normalize(value: str) -> str:

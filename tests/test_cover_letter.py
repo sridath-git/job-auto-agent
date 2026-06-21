@@ -5,6 +5,7 @@ import pytest
 from job_auto_agent.config import Settings
 from job_auto_agent.cover_letter import generator as cover_letter_module
 from job_auto_agent.cover_letter.generator import (
+    CoverLetterValidationError,
     CoverLetterJobNotFoundError,
     generate_ai_cover_letter_for_job,
     generate_cover_letter_for_job,
@@ -221,6 +222,94 @@ Sridath
     assert result.output_path.exists()
 
 
+def test_ai_cover_letter_uses_recruiter_greeting_and_candidate_signature(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path, sender="Jane Recruiter <jane.recruiter@example.com>")
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(
+        "Sridath Jeelugula\nKubernetes and Terraform experience.",
+        encoding="utf-8",
+    )
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        assert "Applicant/candidate name is: Sridath Jeelugula" in prompt
+        assert "Recruiter name: Jane Recruiter" in prompt
+        return """Dear Hiring Team,
+
+I am interested in this role based on my Kubernetes and Terraform experience.
+
+Sincerely,
+
+Sridath Jeelugula
+"""
+
+    monkeypatch.setattr(cover_letter_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = generate_ai_cover_letter_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "letters",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert output.startswith("Dear Jane Recruiter,")
+    signature = output.split("Sincerely,", maxsplit=1)[1]
+    assert "Sridath Jeelugula" in signature
+    assert "Jane Recruiter" not in signature
+    assert "jane.recruiter@example.com" not in signature
+
+
+def test_ai_cover_letter_fails_when_recruiter_is_used_in_signature(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path, sender="Jane Recruiter <jane.recruiter@example.com>")
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(
+        "Sridath Jeelugula\nKubernetes and Terraform experience.",
+        encoding="utf-8",
+    )
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        return """Dear Jane Recruiter,
+
+I am interested in this role.
+
+Sincerely,
+
+Jane Recruiter
+"""
+
+    monkeypatch.setattr(cover_letter_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        with pytest.raises(CoverLetterValidationError, match="recruiter identity appears in signature"):
+            generate_ai_cover_letter_for_job(
+                conn,
+                job_id,
+                settings,
+                master_resume_path=resume_path,
+                output_dir=tmp_path / "letters",
+            )
+
+
 def test_cover_letter_excludes_contact_details_and_internal_sections(tmp_path) -> None:
     db_path = tmp_path / "jobs.db"
     init_db(db_path)
@@ -253,13 +342,13 @@ def test_cover_letter_excludes_contact_details_and_internal_sections(tmp_path) -
     assert "Cognizant" in output
 
 
-def _seed_job(db_path) -> int:
+def _seed_job(db_path, sender: str = "Recruiter <jobs@example.com>") -> int:
     now = datetime.now(timezone.utc)
     with connect(db_path) as conn:
         message = EmailMessage(
             gmail_id="message-1",
             thread_id="thread-1",
-            sender="Recruiter <jobs@example.com>",
+            sender=sender,
             subject="Platform Security Engineer",
             snippet="Kubernetes, Terraform, DevSecOps, PKI, and reliability.",
             body_text="Kubernetes, Terraform, DevSecOps, PKI, CI/CD, cloud, and reliability.",
