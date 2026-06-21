@@ -88,6 +88,7 @@ def generate_ai_cover_letter_for_job(
         base_url=settings.openai_base_url,
         model=settings.openai_model,
         prompt=prompt,
+        timeout_seconds=settings.ai_provider_timeout_seconds,
     )
     output_path = _output_path(output_dir, job_id)
     output_path.write_text(_prepare_ai_cover_letter_output(draft), encoding="utf-8")

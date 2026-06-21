@@ -121,6 +121,7 @@ def tailor_resume_with_ai_for_job(
         base_url=settings.openai_base_url,
         model=settings.openai_model,
         prompt=prompt,
+        timeout_seconds=settings.ai_provider_timeout_seconds,
     )
 
     output_path = output_dir / f"job_{job_id}_tailored_resume.md"
@@ -244,6 +245,7 @@ def _call_openai_compatible_provider(
     base_url: str,
     model: str,
     prompt: str,
+    timeout_seconds: int = 60,
 ) -> str:
     payload = {
         "model": model,
@@ -267,7 +269,7 @@ def _call_openai_compatible_provider(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             body = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         message = exc.read().decode("utf-8", errors="replace")

@@ -261,6 +261,8 @@ AI_TAILORING_ENABLED=true
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
 OPENAI_API_KEY=your_api_key_here
+# Optional override. Cloud default is 60 seconds.
+AI_PROVIDER_TIMEOUT_SECONDS=60
 ```
 
 Do not commit `.env` or real API keys.
@@ -272,6 +274,8 @@ job-auto-agent tailor-resume --job-id 123 --ai
 ```
 
 `OPENAI_BASE_URL` defaults to OpenAI's API endpoint and can be changed for OpenAI-compatible providers.
+
+`AI_PROVIDER_TIMEOUT_SECONDS` is optional. When omitted, cloud OpenAI-compatible providers use a 60-second timeout and localhost/Ollama providers use a 300-second timeout.
 
 If `AI_TAILORING_ENABLED=false`, analysis-only tailoring continues to work and AI tailoring shows a clear error. If `OPENAI_API_KEY` is missing for a cloud provider, AI tailoring shows a clear error.
 
@@ -298,6 +302,8 @@ AI_TAILORING_ENABLED=true
 OPENAI_BASE_URL=http://localhost:11434/v1
 OPENAI_MODEL=qwen2.5:7b
 OPENAI_API_KEY=ollama
+# Optional override. Ollama default is 300 seconds.
+AI_PROVIDER_TIMEOUT_SECONDS=300
 ```
 
 `OPENAI_API_KEY=ollama` is a local dummy value for Ollama. A real OpenAI API key is still required when `OPENAI_BASE_URL=https://api.openai.com/v1`.
@@ -364,6 +370,8 @@ AI_TAILORING_ENABLED=true
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
 OPENAI_API_KEY=your_api_key_here
+# Optional override. Cloud default is 60 seconds.
+AI_PROVIDER_TIMEOUT_SECONDS=60
 ```
 
 For free local Ollama cover letter generation, use the Ollama `.env` settings above and run:

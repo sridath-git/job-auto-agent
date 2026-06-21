@@ -128,10 +128,17 @@ def test_ai_cover_letter_generation_creates_output_file(tmp_path, monkeypatch) -
     resume_path.write_text("Kubernetes and Terraform experience.", encoding="utf-8")
     settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
 
-    def fake_provider(api_key: str, base_url: str, model: str, prompt: str) -> str:
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
         assert api_key == "test-key"
         assert base_url == "https://api.openai.com/v1"
         assert model == "test-model"
+        assert timeout_seconds == 60
         assert "Do not fabricate experience" in prompt
         return """# Cover Letter Draft for Job 1
 
@@ -178,10 +185,17 @@ def test_ai_cover_letter_uses_local_ollama_dummy_key(tmp_path, monkeypatch) -> N
         openai_model="qwen2.5:7b",
     )
 
-    def fake_provider(api_key: str, base_url: str, model: str, prompt: str) -> str:
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
         assert api_key == "ollama"
         assert base_url == "http://127.0.0.1:11434/v1"
         assert model == "qwen2.5:7b"
+        assert timeout_seconds == 300
         assert "Do not fabricate experience" in prompt
         return """Dear Hiring Team,
 
@@ -272,7 +286,10 @@ def _settings(
     openai_api_key: str | None,
     openai_base_url: str = "https://api.openai.com/v1",
     openai_model: str = "test-model",
+    ai_provider_timeout_seconds: int | None = None,
 ) -> Settings:
+    if ai_provider_timeout_seconds is None:
+        ai_provider_timeout_seconds = 300 if "127.0.0.1" in openai_base_url else 60
     return Settings(
         gmail_credentials_file=tmp_path / "credentials.json",
         gmail_token_file=tmp_path / "token.json",
@@ -283,6 +300,7 @@ def _settings(
         openai_base_url=openai_base_url,
         openai_model=openai_model,
         ai_tailoring_enabled=ai_tailoring_enabled,
+        ai_provider_timeout_seconds=ai_provider_timeout_seconds,
     )
 
 

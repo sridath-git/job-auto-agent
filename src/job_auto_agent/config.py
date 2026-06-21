@@ -25,6 +25,7 @@ class Settings:
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
     ai_tailoring_enabled: bool = False
+    ai_provider_timeout_seconds: int = 60
 
     @property
     def sqlite_path(self) -> Path:
@@ -35,6 +36,9 @@ class Settings:
 
 
 def get_settings() -> Settings:
+    openai_base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    default_timeout_seconds = default_ai_provider_timeout_seconds(openai_base_url)
+    configured_timeout_seconds = os.getenv("AI_PROVIDER_TIMEOUT_SECONDS")
     return Settings(
         gmail_credentials_file=Path(os.getenv("GMAIL_CREDENTIALS_FILE", "credentials.json")),
         gmail_token_file=Path(os.getenv("GMAIL_TOKEN_FILE", "token.json")),
@@ -46,9 +50,10 @@ def get_settings() -> Settings:
         ),
         match_min_score=int(os.getenv("MATCH_MIN_SCORE", "35")),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
-        openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        openai_base_url=openai_base_url,
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         ai_tailoring_enabled=os.getenv("AI_TAILORING_ENABLED", "false").lower() == "true",
+        ai_provider_timeout_seconds=int(configured_timeout_seconds or default_timeout_seconds),
     )
 
 
@@ -72,3 +77,9 @@ def resolve_openai_api_key(settings: Settings) -> str | None:
 
 def is_dummy_local_api_key(api_key: str | None) -> bool:
     return bool(api_key) and api_key.strip().lower() in LOCAL_DUMMY_API_KEYS
+
+
+def default_ai_provider_timeout_seconds(base_url: str) -> int:
+    if is_local_openai_base_url(base_url):
+        return 300
+    return 60
