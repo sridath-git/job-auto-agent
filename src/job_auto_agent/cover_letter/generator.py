@@ -294,6 +294,7 @@ def _extract_recruiter_name(sender: str | None) -> str | None:
     if not sender:
         return None
     name = sender.split("<", maxsplit=1)[0].strip().strip('"')
+    name = re.sub(r"\s+via\s+LinkedIn\b", "", name, flags=re.IGNORECASE).strip()
     if not name or "@" in name:
         return None
     blocked_words = {"recruiter", "jobs", "careers", "talent", "hiring", "team"}
@@ -317,15 +318,8 @@ def _ensure_cover_letter_greeting(text: str, recruiter_name: str | None) -> str:
 
 
 def _ensure_candidate_signature(text: str, candidate_name: str) -> str:
-    lines = [line.rstrip() for line in text.splitlines()]
-    signature_index = next(
-        (index for index, line in enumerate(lines) if line.strip().lower() in {"sincerely,", "sincerely"}),
-        None,
-    )
-    if signature_index is None:
-        body = "\n".join(lines).rstrip()
-        return f"{body}\n\nSincerely,\n\n{candidate_name}\n"
-    return "\n".join(lines[:signature_index]).rstrip() + f"\n\nSincerely,\n\n{candidate_name}\n"
+    body = _remove_closing_blocks(text)
+    return f"{body.rstrip()}\n\nSincerely,\n\n{candidate_name}\n"
 
 
 def _validate_cover_letter_identity(
@@ -351,6 +345,9 @@ def _validate_cover_letter_identity(
         raise CoverLetterValidationError(
             "AI cover letter failed validation: recruiter identity appears in signature."
         )
+    closing_count = len(re.findall(r"(?im)^\s*(Sincerely|Best regards|Regards|Thank you),?\s*$", letter))
+    if closing_count != 1:
+        raise CoverLetterValidationError("AI cover letter failed validation: duplicate signature closings.")
 
 
 def _validate_raw_cover_letter_signature(
@@ -539,11 +536,32 @@ def _sanitize_cover_letter_text(text: str) -> str:
 
 
 def _sanitize_sentence(text: str) -> str:
+    text = re.sub(r"\bvia\s+LinkedIn\b", "", text, flags=re.IGNORECASE)
+    for bad_phrase in (
+        "Thank you for your interest in my resume",
+        "I have been selected as",
+    ):
+        text = re.sub(re.escape(bad_phrase), "", text, flags=re.IGNORECASE)
     text = re.sub(r"https?://\S+", "", text)
     text = re.sub(r"\b[\w.\-+]+@[\w.\-]+\.\w+\b", "", text)
     text = re.sub(r"(?:\+?\d[\d\s().-]{7,}\d)", "", text)
     text = re.sub(r"\s{2,}", " ", text)
     return text.strip()
+
+
+def _remove_closing_blocks(text: str) -> str:
+    lines = text.splitlines()
+    first_closing_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if re.match(r"^\s*(Sincerely|Best regards|Regards|Thank you),?\s*$", line, flags=re.IGNORECASE)
+        ),
+        None,
+    )
+    if first_closing_index is None:
+        return text
+    return "\n".join(lines[:first_closing_index]).rstrip()
 
 
 def _contains_contact_info(text: str) -> bool:

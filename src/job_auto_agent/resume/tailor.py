@@ -299,6 +299,7 @@ def _prepare_ai_tailored_resume(draft: str, resume_text: str | None = None) -> s
     if resume_text:
         cleaned = _apply_master_resume_header(cleaned, resume_text)
         cleaned = _normalize_resume_section_headings(cleaned)
+        cleaned = _repair_resume_required_sections(cleaned, resume_text)
     return cleaned.strip() + "\n"
 
 
@@ -631,6 +632,89 @@ def _normalize_resume_section_headings(draft: str) -> str:
         else:
             lines.append(line)
     return "\n".join(lines)
+
+
+def _repair_resume_required_sections(draft: str, resume_text: str) -> str:
+    repaired = draft
+    required_experience_lines = _extract_required_experience_lines(resume_text)
+    missing_experience_lines = [line for line in required_experience_lines if line not in repaired]
+    if missing_experience_lines:
+        repaired = _prepend_lines_to_section(
+            repaired,
+            "Professional Experience",
+            missing_experience_lines,
+        )
+
+    education_lines = _extract_section_body_lines(resume_text, "education")
+    if education_lines:
+        repaired = _replace_section(
+            repaired,
+            "Education",
+            education_lines,
+        )
+
+    language_lines = _extract_section_body_lines(resume_text, "languages")
+    if language_lines:
+        repaired = _replace_section(
+            repaired,
+            "Languages",
+            language_lines,
+        )
+    return repaired
+
+
+def _prepend_lines_to_section(draft: str, section_name: str, lines_to_prepend: list[str]) -> str:
+    lines = draft.splitlines()
+    heading_index = _find_section_heading_index(lines, section_name)
+    if heading_index is None:
+        return draft.rstrip() + f"\n\n## {section_name}\n\n" + "\n".join(lines_to_prepend) + "\n"
+    insert_index = heading_index + 1
+    while insert_index < len(lines) and not lines[insert_index].strip():
+        insert_index += 1
+    return "\n".join(lines[:insert_index] + lines_to_prepend + [""] + lines[insert_index:])
+
+
+def _replace_section(draft: str, section_name: str, replacement_lines: list[str]) -> str:
+    lines = draft.splitlines()
+    heading_index = _find_section_heading_index(lines, section_name)
+    replacement_block = [f"## {section_name}", "", *replacement_lines]
+    if heading_index is None:
+        return draft.rstrip() + "\n\n" + "\n".join(replacement_block) + "\n"
+    next_heading_index = next(
+        (
+            index
+            for index in range(heading_index + 1, len(lines))
+            if lines[index].strip().startswith("## ")
+        ),
+        len(lines),
+    )
+    return "\n".join(lines[:heading_index] + replacement_block + lines[next_heading_index:])
+
+
+def _find_section_heading_index(lines: list[str], section_name: str) -> int | None:
+    normalized_section = _normalize(section_name)
+    for index, line in enumerate(lines):
+        if line.strip().startswith("## ") and _normalize(line) == normalized_section:
+            return index
+    return None
+
+
+def _extract_section_body_lines(resume_text: str, section_name: str) -> list[str]:
+    target = _normalize(section_name)
+    lines: list[str] = []
+    in_section = False
+    for raw_line in resume_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            if in_section:
+                break
+            in_section = _normalize(line) == target
+            continue
+        if in_section:
+            lines.append(line.lstrip("- ").strip())
+    return _dedupe_lines(lines)
 
 
 def _required_resume_values(resume_text: str) -> list[tuple[str, str]]:

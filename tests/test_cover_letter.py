@@ -270,6 +270,62 @@ Sridath Jeelugula
     assert "jane.recruiter@example.com" not in signature
 
 
+def test_ai_cover_letter_removes_linkedin_greeting_bad_phrases_and_duplicate_signatures(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path, sender="Manal Khaldi via LinkedIn <manal@example.com>")
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(
+        "Sridath Jeelugula\nKubernetes and Terraform experience.",
+        encoding="utf-8",
+    )
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        return """Dear Manal Khaldi via LinkedIn,
+
+Thank you for your interest in my resume. I have been selected as a strong fit.
+My Kubernetes and Terraform experience aligns with the role.
+
+Best regards,
+
+Someone Else
+
+Sincerely,
+
+Sridath Jeelugula
+"""
+
+    monkeypatch.setattr(cover_letter_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = generate_ai_cover_letter_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "letters",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert output.startswith("Dear Manal Khaldi,")
+    assert "via LinkedIn" not in output
+    assert "Thank you for your interest in my resume" not in output
+    assert "I have been selected as" not in output
+    assert "Best regards" not in output
+    assert output.count("Sincerely,") == 1
+    assert output.rstrip().endswith("Sincerely,\n\nSridath Jeelugula")
+
+
 def test_ai_cover_letter_fails_when_recruiter_is_used_in_signature(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "jobs.db"
     init_db(db_path)
