@@ -12,7 +12,6 @@ from job_auto_agent.resume.tailor import (
     JobNotFoundError,
     MasterResumeMissingError,
     OpenAIAPIKeyMissingError,
-    AITailoringProviderError,
     tailor_resume_for_job,
     tailor_resume_with_ai_for_job,
 )
@@ -530,7 +529,7 @@ English | Telugu | Hindi
     assert "## Overview" not in output
 
 
-def test_ai_tailoring_fails_when_required_timeline_is_missing(tmp_path, monkeypatch) -> None:
+def test_ai_tailoring_repairs_missing_timelines_from_master_resume(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "jobs.db"
     init_db(db_path)
     job_id = _seed_job(db_path)
@@ -569,14 +568,75 @@ English | Telugu | Hindi
     monkeypatch.setattr(tailor_module, "_call_openai_compatible_provider", fake_provider)
 
     with connect(db_path) as conn:
-        with pytest.raises(AITailoringProviderError, match="company timeline"):
-            tailor_resume_with_ai_for_job(
-                conn,
-                job_id,
-                settings,
-                master_resume_path=resume_path,
-                output_dir=tmp_path / "generated",
-            )
+        result = tailor_resume_with_ai_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "generated",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert "Intact Financial Corporation — Senior DevSecOps Security Engineer | Jan 2026 – Present" in output
+    assert "Cognizant Technology Solutions — Site Reliability Engineer / DevSecOps Engineer | Montreal, QC | Nov 2020 – Sept 2024" in output
+    assert "Virtusa Consulting Services — Build & Release Engineer | Hyderabad, India | Jan 2015 – Apr 2017" in output
+
+
+def test_ai_tailoring_repairs_missing_education_from_master_resume(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path)
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(_full_master_resume(), encoding="utf-8")
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        return """```markdown
+## Overview
+
+Bad section.
+
+## Professional Summary
+
+- Summary.
+
+## Core Skills & Tool Stack
+
+- Terraform
+
+## Professional Experience
+
+Intact Financial Corporation — Senior DevSecOps Security Engineer | Jan 2026 – Present
+Morgan Stanley — Site Reliability Engineer | Montreal, QC | Dec 2024 – Present
+Cognizant Technology Solutions — Site Reliability Engineer / DevSecOps Engineer | Montreal, QC | Nov 2020 – Sept 2024
+Virtusa Consulting Services — Build & Release Engineer | Hyderabad, India | Jan 2015 – Apr 2017
+
+## Languages
+
+English | Telugu | Hindi
+```"""
+
+    monkeypatch.setattr(tailor_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = tailor_resume_with_ai_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "generated",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert "Master of Engineering (Quality Systems Engineering), Concordia University, Montreal" in output
+    assert "```" not in output
+    assert "## Overview" not in output
 
 
 def test_openai_provider_builds_default_chat_completions_url(monkeypatch) -> None:
