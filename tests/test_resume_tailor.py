@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 import sys
 
 import pytest
@@ -8,6 +9,7 @@ from job_auto_agent.models import EmailMessage, JobOpportunity
 from job_auto_agent.config import Settings
 from job_auto_agent.resume import tailor as tailor_module
 from job_auto_agent.resume.tailor import (
+    AITailoringProviderError,
     AITailoringDisabledError,
     JobNotFoundError,
     MasterResumeMissingError,
@@ -576,6 +578,66 @@ Broken full resume draft.
     assert "English | Telugu | Hindi" in output
 
 
+def test_ai_tailoring_parses_bare_master_resume_headings(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path)
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(
+        """Sridath Jeelugula
+Site Reliability Engineer
+
+Professional Summary
+DevSecOps and SRE experience.
+
+Core Skills & Tool Stack
+Kubernetes
+Terraform
+
+Professional Experience
+Cognizant Technology Solutions — Site Reliability Engineer / DevSecOps Engineer | Montreal, QC
+| Nov 2020 – Sept 2024
+Built platform automation.
+
+Education
+Master of Engineering (Quality Systems Engineering), Concordia University, Montreal | 2019
+
+Languages
+English | Telugu | Hindi
+""",
+        encoding="utf-8",
+    )
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        return "not json"
+
+    monkeypatch.setattr(tailor_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = tailor_resume_with_ai_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "generated",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert output.count("Sridath Jeelugula") == 1
+    assert output.count("## Professional Experience") == 1
+    assert "Cognizant Technology Solutions — Site Reliability Engineer / DevSecOps Engineer | Montreal, QC | Nov 2020 – Sept 2024" in output
+    assert "Master of Engineering (Quality Systems Engineering), Concordia University, Montreal | 2019" in output
+    assert "Education not specified" not in output
+    assert "Languages not specified" not in output
+
+
 def test_ai_tailoring_repairs_missing_timelines_from_master_resume(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "jobs.db"
     init_db(db_path)
@@ -703,6 +765,7 @@ def test_openai_provider_builds_default_chat_completions_url(monkeypatch) -> Non
     def fake_urlopen(request, timeout):
         captured["url"] = request.full_url
         captured["timeout"] = timeout
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
         return FakeResponse()
 
     monkeypatch.setattr(tailor_module.urllib.request, "urlopen", fake_urlopen)
@@ -717,6 +780,7 @@ def test_openai_provider_builds_default_chat_completions_url(monkeypatch) -> Non
     assert output == "ok"
     assert captured["url"] == "https://api.openai.com/v1/chat/completions"
     assert captured["timeout"] == 60
+    assert captured["payload"]["max_tokens"] == 2048
 
 
 def test_openai_provider_builds_custom_chat_completions_url(monkeypatch) -> None:
@@ -779,6 +843,22 @@ def test_openai_provider_builds_ollama_chat_completions_url(monkeypatch) -> None
 
     assert captured["url"] == "http://localhost:11434/v1/chat/completions"
     assert captured["timeout"] == 300
+
+
+def test_openai_provider_timeout_errors_cleanly(monkeypatch) -> None:
+    def fake_urlopen(request, timeout):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(tailor_module.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(AITailoringProviderError, match="timed out after 300 seconds"):
+        tailor_module._call_openai_compatible_provider(
+            api_key="ollama",
+            base_url="http://localhost:11434/v1",
+            model="qwen2.5:7b",
+            prompt="prompt",
+            timeout_seconds=300,
+        )
 
 
 def test_real_resume_and_generated_resumes_are_ignored() -> None:

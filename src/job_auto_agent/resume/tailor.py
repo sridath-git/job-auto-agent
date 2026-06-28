@@ -195,12 +195,14 @@ def build_ai_tailoring_prompt(
         json.dumps(
             {
                 "heading": experience.heading,
-                "bullets": experience.bullets,
+                "bullets": _select_prompt_bullets(experience.bullets, matched_keywords, limit=5),
             },
             ensure_ascii=False,
         )
         for experience in parsed_resume.experiences
     ) or "[]"
+    prompt_skills = _select_prompt_skills(parsed_resume.skills, matched_keywords, limit=35)
+    job_description = _truncate_text(job["description"], 1600)
     return f"""You are helping create a manual tailored resume draft.
 
 Hard safety rules:
@@ -238,7 +240,7 @@ Target job:
 - URL: {job["url"] or "Not available"}
 
 Job description:
-{job["description"]}
+{job_description}
 
 Keywords present in the master resume:
 {matched_section}
@@ -253,7 +255,7 @@ Professional summary lines:
 {json.dumps(parsed_resume.summary_lines, ensure_ascii=False)}
 
 Existing skills:
-{json.dumps(parsed_resume.skills, ensure_ascii=False)}
+{json.dumps(prompt_skills, ensure_ascii=False)}
 
 Experience groups. Use these exact headings:
 {experience_section}
@@ -307,6 +309,7 @@ def _call_openai_compatible_provider(
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.2,
+        "max_tokens": 2048,
     }
     chat_completions_url = f"{base_url.rstrip('/')}/chat/completions"
     request = urllib.request.Request(
@@ -326,6 +329,10 @@ def _call_openai_compatible_provider(
         raise AITailoringProviderError(f"AI provider returned HTTP {exc.code}: {message}") from exc
     except urllib.error.URLError as exc:
         raise AITailoringProviderError(f"Unable to reach AI provider: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise AITailoringProviderError(
+            f"AI provider timed out after {timeout_seconds} seconds."
+        ) from exc
 
     try:
         return body["choices"][0]["message"]["content"]
@@ -354,6 +361,10 @@ def parse_master_resume(resume_text: str) -> ParsedResume:
             if section in sections:
                 current = section
                 continue
+        bare_section = _classify_bare_section_heading(stripped)
+        if bare_section in sections:
+            current = bare_section
+            continue
         if current is None:
             header_lines.append(stripped)
         else:
@@ -480,6 +491,21 @@ def _is_resume_experience_heading(line: str) -> bool:
     return _has_timeline(stripped) or _looks_like_company_heading_without_timeline(stripped)
 
 
+def _classify_bare_section_heading(line: str) -> str | None:
+    normalized = _normalize(line)
+    exact_headings = {
+        "professional summary": "summary",
+        "summary": "summary",
+        "core skills": "skills",
+        "core skills tool stack": "skills",
+        "professional experience": "experience",
+        "experience": "experience",
+        "education": "education",
+        "languages": "languages",
+    }
+    return exact_headings.get(normalized)
+
+
 def _parse_resume_skills(lines: list[str]) -> list[str]:
     skills: list[str] = []
     for line in lines:
@@ -491,6 +517,34 @@ def _parse_resume_skills(lines: list[str]) -> list[str]:
         else:
             skills.append(clean_line)
     return _dedupe_lines(_clean_resume_content_lines(skills))
+
+
+def _select_prompt_skills(skills: list[str], matched_keywords: list[str], limit: int) -> list[str]:
+    ranked = _rank_prompt_lines(skills, matched_keywords)
+    return ranked[:limit] or skills[:limit]
+
+
+def _select_prompt_bullets(bullets: list[str], matched_keywords: list[str], limit: int) -> list[str]:
+    ranked = _rank_prompt_lines(bullets, matched_keywords)
+    selected = _dedupe_lines(ranked[:limit] + bullets[: max(1, limit // 2)])
+    return selected[:limit]
+
+
+def _rank_prompt_lines(lines: list[str], matched_keywords: list[str]) -> list[str]:
+    scored: list[tuple[int, int, str]] = []
+    for index, line in enumerate(lines):
+        normalized_line = _normalize(line)
+        score = sum(1 for term in matched_keywords if _contains_term(normalized_line, term))
+        scored.append((score, -index, line))
+    scored.sort(reverse=True)
+    return [line for score, _, line in scored if score > 0]
+
+
+def _truncate_text(text: str, max_chars: int) -> str:
+    clean_text = re.sub(r"\s+", " ", text or "").strip()
+    if len(clean_text) <= max_chars:
+        return clean_text
+    return clean_text[:max_chars].rsplit(" ", maxsplit=1)[0].rstrip() + "..."
 
 
 def _filter_existing_skills(candidate_skills: list[str], existing_skills: list[str]) -> list[str]:
