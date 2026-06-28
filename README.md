@@ -176,6 +176,7 @@ job-auto-agent tailor-resume --job-id 123
 job-auto-agent tailor-resume --job-id 123 --ai
 job-auto-agent generate-cover-letter --job-id 123
 job-auto-agent generate-cover-letter --job-id 123 --ai
+job-auto-agent prepare-application --job-id 123 --ai --overwrite
 ```
 
 ## Manual Resume Tailoring
@@ -324,10 +325,11 @@ In the Streamlit dashboard:
 
 1. Find the job you want to tailor for.
 2. Note the displayed job ID.
-3. Click **Generate Resume Analysis** for local keyword analysis.
-4. Click **Generate AI-Tailored Resume** only when AI tailoring is enabled and you want a recruiter-ready tailored resume from the configured AI API.
+3. Click **Generate Resume** when AI tailoring is enabled and you want a recruiter-ready tailored resume from the configured AI API.
+4. Click **View Resume** to review the generated Markdown in the dashboard.
 5. If a generated resume already exists, check **Overwrite existing generated resume** before regenerating.
-6. Review the generated resume and the separate analysis file manually before using it.
+6. Use **Generate Resume Analysis** under rule-based utilities if you only want local keyword analysis.
+7. Review the generated resume and the separate analysis file manually before using it.
 
 ## Cover Letter Generation
 
@@ -384,10 +386,51 @@ The cover letter generator does not auto-apply, send emails, or upload files. Dr
 
 In the Streamlit dashboard, each job shows:
 
-- **Generate Rule-Based Cover Letter**
-- **Generate AI Cover Letter**
+- **Generate Cover Letter**
+- **View Cover Letter**
+- **Generate Rule-Based Cover Letter** under rule-based utilities
 
 After generation, the dashboard shows the generated file path and any missing-information warnings.
+
+## Application Packages
+
+The application package workflow generates the AI-tailored resume, AI cover letter, DOCX exports, optional PDF exports, and combined analysis into one local folder:
+
+```text
+data/generated_applications/job_<id>/
+```
+
+Run it from the CLI:
+
+```bash
+job-auto-agent prepare-application --job-id 123 --ai --overwrite
+```
+
+Expected files:
+
+```text
+resume.md
+cover_letter.md
+resume.docx
+cover_letter.docx
+analysis.md
+resume.pdf              # only when a local DOCX-to-PDF converter is available
+cover_letter.pdf        # only when a local DOCX-to-PDF converter is available
+```
+
+DOCX export is local and uses a clean recruiter-ready layout with headings and bullets preserved. PDF export is best-effort; if no local converter such as LibreOffice is available, the command prints a warning and still creates Markdown and DOCX files.
+
+Preparing an application updates the job status to `Ready to Apply`. It does not auto-apply, send emails, or upload files.
+
+In the dashboard, each job card includes:
+
+- **Prepare Application**
+- **Open Application Folder**
+- **Download Resume DOCX**
+- **Download Cover Letter DOCX**
+- **Download Resume PDF** when available
+- **Download Cover Letter PDF** when available
+- Status buttons for `Interested`, `Ready to Apply`, `Applied`, and `Not Interested`
 
 ## Project Structure
 
@@ -395,7 +438,9 @@ After generation, the dashboard shows the generated file path and any missing-in
 dashboard/                  Streamlit UI
 data/profile/               Local profile examples and ignored real master resume
 data/generated_cover_letters/ Ignored local generated cover letters
+data/generated_applications/ Ignored local application packages
 src/job_auto_agent/
+  application/              Application package workflow and DOCX/PDF export
   cli.py                    Command-line entrypoint
   config.py                 Environment-driven settings
   cover_letter/             Manual cover letter generation
