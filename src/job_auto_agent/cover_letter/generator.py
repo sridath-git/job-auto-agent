@@ -222,6 +222,8 @@ def _build_ai_cover_letter_prompt(
 ) -> str:
     matched_section = "\n".join(f"- {term}" for term in matched_keywords) or "- None"
     missing_section = "\n".join(f"- {term}" for term in missing_keywords) or "- None"
+    resume_context = _build_cover_letter_resume_context(resume_text, matched_keywords)
+    job_description = _truncate_prompt_text(job["description"], 1600)
     return f"""Generate three professional recruiter-ready cover letter body paragraphs.
 
 Hard safety rules:
@@ -240,7 +242,7 @@ Hard safety rules:
 - If recruiter name is known, greet them as: Dear {recruiter_name or "Hiring Manager"},
 - Use neutral source wording: I am writing to express my interest in the {job["title"]} opportunity at {job["company"] or "your team"}.
 - Do not say the role was advertised on LinkedIn unless the source is explicitly configured as LinkedIn.
-- Do not use generic phrases like "align perfectly" or "honed a strong set of skills".
+- Do not use generic phrases like "align perfectly", "aligns perfectly", or "honed a strong set of skills".
 - Do not write the greeting.
 - Do not write the signature.
 - Do not sign the letter.
@@ -266,7 +268,7 @@ Target job:
 - Recruiter name: {recruiter_name or "Unknown"}
 
 Job description:
-{job["description"]}
+{job_description}
 
 Keywords found in master resume:
 {matched_section}
@@ -274,8 +276,8 @@ Keywords found in master resume:
 Missing job keywords that must not be added as claimed experience:
 {missing_section}
 
-Master resume:
-{resume_text}
+Relevant master resume excerpts:
+{resume_context}
 """
 
 
@@ -317,6 +319,8 @@ def _parse_ai_cover_letter_paragraphs(draft: str) -> list[str] | None:
     sanitized = [paragraph for paragraph in sanitized if paragraph]
     if len(sanitized) != 3:
         return None
+    if any(_is_placeholder_cover_letter_paragraph(paragraph) for paragraph in sanitized):
+        return None
     return sanitized
 
 
@@ -354,6 +358,40 @@ def _fallback_ai_cover_letter_paragraphs(
     ]
 
 
+def _build_cover_letter_resume_context(resume_text: str, matched_keywords: list[str]) -> str:
+    context_lines = _select_resume_highlights(resume_text, matched_keywords, limit=8)
+    if not context_lines:
+        context_lines = [
+            line.strip().lstrip("- ").strip()
+            for line in resume_text.splitlines()
+            if line.strip()
+            and not _contains_contact_info(line)
+            and not line.strip().startswith("#")
+        ][:8]
+    company_context = _company_context(resume_text)
+    selected = [company_context, *context_lines]
+    return _truncate_prompt_text("\n".join(_dedupe_context_lines(selected)), 2400)
+
+
+def _dedupe_context_lines(lines: list[str]) -> list[str]:
+    seen: set[str] = set()
+    output: list[str] = []
+    for line in lines:
+        clean_line = _sanitize_sentence(line)
+        key = clean_line.lower()
+        if clean_line and key not in seen:
+            seen.add(key)
+            output.append(clean_line)
+    return output
+
+
+def _truncate_prompt_text(text: str, max_chars: int) -> str:
+    clean_text = re.sub(r"\s+", " ", text or "").strip()
+    if len(clean_text) <= max_chars:
+        return clean_text
+    return clean_text[:max_chars].rsplit(" ", maxsplit=1)[0].rstrip() + "..."
+
+
 def _sanitize_cover_letter_paragraph(text: str) -> str:
     text = _remove_internal_sections(_strip_code_fences(text))
     text = _remove_closing_blocks(text)
@@ -372,6 +410,17 @@ def _sanitize_cover_letter_paragraph(text: str) -> str:
             continue
         lines.append(_sanitize_sentence(stripped))
     return re.sub(r"\s{2,}", " ", " ".join(line for line in lines if line)).strip()
+
+
+def _is_placeholder_cover_letter_paragraph(text: str) -> bool:
+    normalized = text.lower()
+    placeholder_phrases = (
+        "introduction and interest paragraph",
+        "relevant experience paragraph",
+        "fit and closing-value paragraph",
+        "using only master resume facts",
+    )
+    return any(phrase in normalized for phrase in placeholder_phrases)
 
 
 def _extract_candidate_name(resume_text: str) -> str:
@@ -645,17 +694,21 @@ def _sanitize_cover_letter_text(text: str) -> str:
 
 def _sanitize_sentence(text: str) -> str:
     text = re.sub(r"\bvia\s+LinkedIn\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\baligns perfectly with\b", "is relevant to", text, flags=re.IGNORECASE)
+    text = re.sub(r"\balign perfectly with\b", "are relevant to", text, flags=re.IGNORECASE)
     for bad_phrase in (
         "Thank you for your interest in my resume",
         "I have been selected as",
         "as advertised on LinkedIn",
         "align perfectly",
+        "aligns perfectly",
         "honed a strong set of skills",
     ):
         text = re.sub(re.escape(bad_phrase), "", text, flags=re.IGNORECASE)
     text = re.sub(r"https?://\S+", "", text)
     text = re.sub(r"\b[\w.\-+]+@[\w.\-]+\.\w+\b", "", text)
     text = re.sub(r"(?:\+?\d[\d\s().-]{7,}\d)", "", text)
+    text = re.sub(r"\s+([.,;:])", r"\1", text)
     text = re.sub(r"\s{2,}", " ", text)
     return text.strip()
 

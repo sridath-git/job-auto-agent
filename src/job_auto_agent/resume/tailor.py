@@ -142,7 +142,7 @@ def tailor_resume_with_ai_for_job(
     )
 
     ai_rewrites = _parse_ai_resume_rewrites(draft, parsed_resume)
-    prepared_resume = _render_ai_tailored_resume_v2(parsed_resume, ai_rewrites)
+    prepared_resume = _render_ai_tailored_resume_v2(parsed_resume, ai_rewrites, matched_keywords)
     _validate_ai_tailored_resume(prepared_resume, resume_text)
 
     output_path = output_dir / f"job_{job_id}_tailored_resume.md"
@@ -417,7 +417,11 @@ def _parse_ai_resume_rewrites(draft: str, parsed_resume: ParsedResume) -> dict:
     return rewrites
 
 
-def _render_ai_tailored_resume_v2(parsed_resume: ParsedResume, ai_rewrites: dict) -> str:
+def _render_ai_tailored_resume_v2(
+    parsed_resume: ParsedResume,
+    ai_rewrites: dict,
+    matched_keywords: list[str] | None = None,
+) -> str:
     summary_lines = ai_rewrites.get("summary") if isinstance(ai_rewrites.get("summary"), list) else None
     skill_lines = ai_rewrites.get("skills") if isinstance(ai_rewrites.get("skills"), list) else None
     experience_rewrites = ai_rewrites.get("experience") if isinstance(ai_rewrites.get("experience"), dict) else {}
@@ -432,7 +436,12 @@ def _render_ai_tailored_resume_v2(parsed_resume: ParsedResume, ai_rewrites: dict
     for experience in parsed_resume.experiences:
         output_lines.append(experience.heading)
         bullets = experience_rewrites.get(experience.heading) if isinstance(experience_rewrites, dict) else None
-        output_lines.extend(_render_resume_lines(bullets or experience.bullets or ["Experience details not specified in master resume."]))
+        rendered_bullets = _select_experience_bullets_for_render(
+            experience,
+            bullets if isinstance(bullets, list) else [],
+            matched_keywords or [],
+        )
+        output_lines.extend(_render_resume_lines(rendered_bullets or ["Experience details not specified in master resume."]))
         output_lines.append("")
     output_lines.extend(["## Education", ""])
     output_lines.extend(_render_resume_lines(parsed_resume.education_lines or ["Education not specified in master resume."]))
@@ -507,16 +516,39 @@ def _classify_bare_section_heading(line: str) -> str | None:
 
 
 def _parse_resume_skills(lines: list[str]) -> list[str]:
-    skills: list[str] = []
-    for line in lines:
-        clean_line = line.strip().lstrip("- ").strip()
-        if not clean_line:
-            continue
-        if "," in clean_line and not re.search(r"\b\d{4}\b", clean_line):
-            skills.extend(part.strip() for part in clean_line.split(","))
-        else:
-            skills.append(clean_line)
-    return _dedupe_lines(_clean_resume_content_lines(skills))
+    return _dedupe_lines(_clean_resume_content_lines(lines))
+
+
+def _select_experience_bullets_for_render(
+    experience: ResumeExperience,
+    ai_bullets: list[str],
+    matched_keywords: list[str],
+) -> list[str]:
+    original_bullets = experience.bullets
+    minimum_count, maximum_count = _experience_bullet_bounds(experience.heading, len(original_bullets))
+    selected = _dedupe_lines(ai_bullets)
+    if len(selected) < minimum_count:
+        selected = _dedupe_lines(
+            selected
+            + _rank_prompt_lines(original_bullets, matched_keywords)
+            + original_bullets
+        )
+    if maximum_count and len(selected) > maximum_count:
+        return selected[:maximum_count]
+    return selected
+
+
+def _experience_bullet_bounds(heading: str, master_bullet_count: int) -> tuple[int, int]:
+    normalized = _normalize(heading)
+    if "intact financial corporation" in normalized:
+        return min(master_bullet_count, 8), min(master_bullet_count, 10) or 10
+    if "morgan stanley" in normalized:
+        return min(master_bullet_count, 8), min(master_bullet_count, 10) or 10
+    if "cognizant technology solutions" in normalized:
+        return min(master_bullet_count, 5), min(master_bullet_count, 6) or 6
+    if "virtusa consulting services" in normalized:
+        return min(master_bullet_count, 3), min(master_bullet_count, 4) or 4
+    return min(master_bullet_count, 3), min(master_bullet_count, 6) or 6
 
 
 def _select_prompt_skills(skills: list[str], matched_keywords: list[str], limit: int) -> list[str]:

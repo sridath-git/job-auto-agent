@@ -318,6 +318,50 @@ def test_ai_cover_letter_uses_structured_paragraphs_with_app_owned_envelope(tmp_
     assert "as advertised on LinkedIn" not in output
 
 
+def test_ai_cover_letter_rejects_schema_placeholder_paragraphs(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path, sender="Jane Recruiter <jane.recruiter@example.com>")
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(
+        "Sridath Jeelugula\nKubernetes, Terraform, DevSecOps, and reliability experience.",
+        encoding="utf-8",
+    )
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        return """{
+  "paragraphs": [
+    "I am writing to express my interest in the Platform Security Engineer opportunity at ExampleCo.",
+    "Relevant experience paragraph using only master resume facts.",
+    "Fit and closing-value paragraph."
+  ]
+}"""
+
+    monkeypatch.setattr(cover_letter_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = generate_ai_cover_letter_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "letters",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert "Relevant experience paragraph" not in output
+    assert "Fit and closing-value paragraph" not in output
+    assert output.count("Dear ") == 1
+    assert output.count("Sincerely,") == 1
+
+
 def test_ai_cover_letter_removes_linkedin_greeting_bad_phrases_and_duplicate_signatures(
     tmp_path,
     monkeypatch,
@@ -343,6 +387,7 @@ def test_ai_cover_letter_removes_linkedin_greeting_bad_phrases_and_duplicate_sig
 
 Thank you for your interest in my resume. I have been selected as a strong fit.
 My Kubernetes and Terraform experience align perfectly with the role as advertised on LinkedIn.
+My DevSecOps experience aligns perfectly with the team.
 I have honed a strong set of skills in platform engineering.
 
 Best regards,
@@ -370,6 +415,7 @@ Sridath Jeelugula
     assert "via LinkedIn" not in output
     assert "as advertised on LinkedIn" not in output
     assert "align perfectly" not in output
+    assert "aligns perfectly" not in output
     assert "honed a strong set of skills" not in output
     assert "Thank you for your interest in my resume" not in output
     assert "I have been selected as" not in output

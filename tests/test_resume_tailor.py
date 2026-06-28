@@ -638,6 +638,142 @@ English | Telugu | Hindi
     assert "Languages not specified" not in output
 
 
+def test_ai_tailoring_preserves_skill_category_lines(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(
+        db_path,
+        title="DevSecOps Cloud Identity Engineer",
+        description="DevSecOps, Vault, PKI, Kubernetes, Terraform, CI/CD, and SRE.",
+    )
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(_quality_master_resume(), encoding="utf-8")
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        return json.dumps(
+            {
+                "summary": ["DevSecOps and platform reliability experience."],
+                "skills": [
+                    "GitOps (FluxCD",
+                    "ArgoCD)",
+                    "Bash",
+                    "Python",
+                    "CI/CD & DevOps: Azure DevOps, Jenkins, GitHub Actions, GitOps (FluxCD, ArgoCD), Release Automation",
+                ],
+                "experience": [],
+            }
+        )
+
+    monkeypatch.setattr(tailor_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = tailor_resume_with_ai_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "generated",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert "- CI/CD & DevOps: Azure DevOps, Jenkins, GitHub Actions, GitOps (FluxCD, ArgoCD), Release Automation" in output
+    assert "- Languages: Bash, Python, Groovy, PowerShell" in output
+    assert "\n- GitOps (FluxCD\n" not in output
+    assert "\n- ArgoCD)\n" not in output
+    assert "\n- Bash\n" not in output
+    assert "\n- Python\n" not in output
+
+
+def test_ai_tailoring_fills_sparse_ai_bullets_from_master_resume(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(
+        db_path,
+        title="Senior DevSecOps SRE Platform Engineer",
+        description="DevSecOps, SRE, Kubernetes, Vault, PKI, Terraform, CI/CD, Azure, AWS, and reliability.",
+    )
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(_quality_master_resume(), encoding="utf-8")
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        return json.dumps(
+            {
+                "summary": ["Tailored summary using existing DevSecOps and SRE experience."],
+                "skills": [
+                    "Security & Identity: HashiCorp Vault, PKI, cert-manager, mTLS, Azure AD, OIDC, RBAC, MFA, SSO",
+                    "CI/CD & DevOps: Azure DevOps, Jenkins, GitHub Actions, GitOps (FluxCD, ArgoCD), Release Automation",
+                ],
+                "experience": [
+                    {
+                        "heading": "Intact Financial Corporation — Senior DevSecOps Security Engineer | Jan 2026 – Present",
+                        "bullets": ["Rewritten Intact security automation bullet."],
+                    },
+                    {
+                        "heading": "Morgan Stanley — Site Reliability Engineer | Montreal, QC | Dec 2024 – Present",
+                        "bullets": ["Rewritten Morgan Stanley reliability bullet."],
+                    },
+                    {
+                        "heading": (
+                            "Cognizant Technology Solutions — Site Reliability Engineer / DevSecOps Engineer | "
+                            "Montreal, QC | Nov 2020 – Sept 2024"
+                        ),
+                        "bullets": ["Rewritten Cognizant delivery bullet."],
+                    },
+                    {
+                        "heading": "Virtusa Consulting Services — Build & Release Engineer | Hyderabad, India | Jan 2015 – Apr 2017",
+                        "bullets": ["Rewritten Virtusa release bullet."],
+                    },
+                ],
+            }
+        )
+
+    monkeypatch.setattr(tailor_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = tailor_resume_with_ai_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "generated",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert _bullet_count_for_heading(
+        output,
+        "Intact Financial Corporation — Senior DevSecOps Security Engineer | Jan 2026 – Present",
+    ) >= 8
+    assert _bullet_count_for_heading(
+        output,
+        "Morgan Stanley — Site Reliability Engineer | Montreal, QC | Dec 2024 – Present",
+    ) >= 8
+    assert _bullet_count_for_heading(
+        output,
+        "Cognizant Technology Solutions — Site Reliability Engineer / DevSecOps Engineer | Montreal, QC | Nov 2020 – Sept 2024",
+    ) >= 5
+    assert _bullet_count_for_heading(
+        output,
+        "Virtusa Consulting Services — Build & Release Engineer | Hyderabad, India | Jan 2015 – Apr 2017",
+    ) >= 3
+    assert "Master of Engineering (Quality Systems Engineering), Concordia University, Montreal | 2019" in output
+    assert output.count("Sridath Jeelugula") == 1
+    assert output.count("## Professional Experience") == 1
+
+
 def test_ai_tailoring_repairs_missing_timelines_from_master_resume(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "jobs.db"
     init_db(db_path)
@@ -874,6 +1010,24 @@ def _body_after_header(markdown: str) -> str:
     return markdown.split("## Professional Summary", maxsplit=1)[1]
 
 
+def _bullet_count_for_heading(markdown: str, heading: str) -> int:
+    lines = markdown.splitlines()
+    try:
+        start = lines.index(heading) + 1
+    except ValueError:
+        return 0
+    count = 0
+    for line in lines[start:]:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            break
+        if stripped and not stripped.startswith("- "):
+            break
+        if stripped.startswith("- "):
+            count += 1
+    return count
+
+
 def _seed_job(
     db_path,
     title: str = "Cloud Platform Engineer",
@@ -959,5 +1113,68 @@ Master of Engineering (Quality Systems Engineering), Concordia University, Montr
 
 ## Languages
 
+English | Telugu | Hindi
+"""
+
+
+def _quality_master_resume() -> str:
+    return """Sridath Jeelugula
+Site Reliability Engineer | DevSecOps | Platform Engineering
+
+Professional Summary
+DevSecOps Security Engineer and Site Reliability Engineer with Kubernetes, Vault, PKI, Terraform, Azure, AWS, and CI/CD experience.
+
+Core Skills & Tool Stack
+Reliability Engineering: SLO/SLA Management, Error Budgets, Incident Response, RCA, Production Support, Service Availability
+Platform Engineering: Internal Developer Platforms, Golden Paths, Self-Service Enablement, Platform Guardrails, Developer Experience
+Kubernetes & Containers: AKS, EKS, OpenShift, Helm, Istio, Ingress Controllers, Container Security
+Cloud Platforms: Microsoft Azure, AWS, Hybrid Cloud Infrastructure
+CI/CD & DevOps: Azure DevOps, Jenkins, GitHub Actions, GitOps (FluxCD, ArgoCD), Release Automation
+Infrastructure as Code: Terraform, Infrastructure Standardization, Environment Automation
+Security & Identity: HashiCorp Vault, PKI, cert-manager, mTLS, Azure AD, OIDC, RBAC, MFA, SSO
+Application Security & DevSecOps: Secure SDLC, SAST, DAST, SCA, GitHub Advanced Security, SonarQube, Veracode, Invicti, OWASP Top 10, Vulnerability Management
+Languages: Bash, Python, Groovy, PowerShell
+
+Professional Experience
+Intact Financial Corporation — Senior DevSecOps Security Engineer | Jan 2026 – Present
+Established Secure SDLC practices across enterprise applications by integrating SAST, DAST, SCA, secret scanning, and security controls into CI/CD pipelines.
+Built centralized vulnerability reporting and remediation workflows across enterprise applications through the Gadget security platform.
+Managed enterprise application security platforms including Veracode, SonarQube, Invicti, and GitHub Advanced Security.
+Automated security quality gates and policy enforcement controls within CI/CD pipelines.
+Led vulnerability assessment and remediation initiatives with development teams.
+Implemented software composition analysis and dependency governance processes.
+Rolled out GitHub Advanced Security capabilities including secret scanning and dependency scanning.
+Designed and implemented container security controls for Kubernetes workloads.
+Integrated container security validation into deployment pipelines.
+
+Morgan Stanley — Site Reliability Engineer | Montreal, QC | Dec 2024 – Present
+Supported enterprise certificate onboarding and PKI modernization initiatives.
+Owned reliability and security of a multi-cloud Kubernetes platform across AKS, EKS, and OpenShift.
+Led engineering and operational support of enterprise PKI and identity services built on HashiCorp Vault.
+Designed and operated Vault-based identity and credential workflows using cert-manager and OIDC integrations.
+Administered Intermediate Certificate Authorities, trust chains, issuance workflows, and lifecycle governance.
+Supported HSM-backed PKI services for secure key storage and certificate issuance.
+Issued short-lived certificates and implemented mTLS-by-default security controls.
+Led certificate lifecycle automation including issuance, renewal, rotation, and monitoring.
+Developed Infrastructure-as-Code solutions using Terraform, Jenkins, Helm, and GitOps methodologies.
+
+Cognizant Technology Solutions — Site Reliability Engineer / DevSecOps Engineer | Montreal, QC
+| Nov 2020 – Sept 2024
+Built enterprise Jenkins CI/CD pipelines enabling 100+ deployments per month.
+Onboarded .NET, SSIS, and SharePoint workloads to AKS and implemented Istio service mesh.
+Integrated CyberArk Vault and SAST, DAST, and SCA tooling into Jenkins CI/CD pipelines.
+Deployed Datadog monitoring and alert-driven dashboards for AKS.
+Designed Azure DevOps YAML pipelines for .NET and Angular applications on Azure App Services.
+Automated Azure Data Factory, Logic Apps, and Runbook deployments using reusable templates.
+
+Virtusa Consulting Services — Build & Release Engineer | Hyderabad, India | Jan 2015 – Apr 2017
+Automated server provisioning with Puppet and managed AWS EC2 environments.
+Integrated Bitbucket with Jenkins for CI/CD automation across UNIX and Windows environments.
+Managed end-to-end software release lifecycle, ensuring consistent and traceable deployments.
+
+Education
+Master of Engineering (Quality Systems Engineering), Concordia University, Montreal | 2019
+
+Languages
 English | Telugu | Hindi
 """
