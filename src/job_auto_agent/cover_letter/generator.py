@@ -106,7 +106,13 @@ def generate_ai_cover_letter_for_job(
     )
     _validate_raw_cover_letter_signature(draft, recruiter_name, recruiter_sender)
     output_path = _output_path(output_dir, job_id)
-    letter = _prepare_ai_cover_letter_output(draft, resume_text, recruiter_name)
+    letter = _prepare_ai_cover_letter_output(
+        draft,
+        resume_text,
+        recruiter_name,
+        job["title"],
+        job["company"] or "your team",
+    )
     _validate_cover_letter_identity(letter, candidate_name, recruiter_name, recruiter_sender)
     output_path.write_text(letter, encoding="utf-8")
     analysis_path = _analysis_path(output_dir, job_id)
@@ -235,6 +241,9 @@ Hard safety rules:
 - Applicant/candidate name is: {candidate_name}.
 - Recruiter identity must never be used as applicant name, applicant signature, applicant email, or applicant contact info.
 - If recruiter name is known, greet them as: Dear {recruiter_name or "Hiring Manager"},
+- Use neutral source wording: I am writing to express my interest in the {job["title"]} opportunity at {job["company"] or "your team"}.
+- Do not say the role was advertised on LinkedIn unless the source is explicitly configured as LinkedIn.
+- Do not use generic phrases like "align perfectly" or "honed a strong set of skills".
 - Signature must always be exactly:
   Sincerely,
 
@@ -274,10 +283,14 @@ def _prepare_ai_cover_letter_output(
     draft: str,
     resume_text: str | None = None,
     recruiter_name: str | None = None,
+    role: str | None = None,
+    company: str | None = None,
 ) -> str:
     candidate_name = _extract_candidate_name(resume_text or "")
     sanitized = _sanitize_cover_letter_text(_remove_internal_sections(_strip_code_fences(draft)))
     sanitized = _ensure_cover_letter_greeting(sanitized, recruiter_name)
+    if role and company:
+        sanitized = _ensure_neutral_opening(sanitized, role, company)
     sanitized = _ensure_candidate_signature(sanitized, candidate_name)
     return sanitized
 
@@ -320,6 +333,22 @@ def _ensure_cover_letter_greeting(text: str, recruiter_name: str | None) -> str:
 def _ensure_candidate_signature(text: str, candidate_name: str) -> str:
     body = _remove_closing_blocks(text)
     return f"{body.rstrip()}\n\nSincerely,\n\n{candidate_name}\n"
+
+
+def _ensure_neutral_opening(text: str, role: str, company: str) -> str:
+    lines = text.splitlines()
+    first_content_index = next((index for index, line in enumerate(lines) if line.strip()), None)
+    if first_content_index is None:
+        return text
+    paragraph_index = next(
+        (index for index in range(first_content_index + 1, len(lines)) if lines[index].strip()),
+        None,
+    )
+    neutral_sentence = f"I am writing to express my interest in the {role} opportunity at {company}."
+    if paragraph_index is None:
+        return "\n".join(lines + ["", neutral_sentence]).strip() + "\n"
+    lines[paragraph_index] = neutral_sentence
+    return "\n".join(lines).strip() + "\n"
 
 
 def _validate_cover_letter_identity(
@@ -540,6 +569,9 @@ def _sanitize_sentence(text: str) -> str:
     for bad_phrase in (
         "Thank you for your interest in my resume",
         "I have been selected as",
+        "as advertised on LinkedIn",
+        "align perfectly",
+        "honed a strong set of skills",
     ):
         text = re.sub(re.escape(bad_phrase), "", text, flags=re.IGNORECASE)
     text = re.sub(r"https?://\S+", "", text)

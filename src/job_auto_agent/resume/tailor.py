@@ -727,15 +727,10 @@ def _required_resume_values(resume_text: str) -> list[tuple[str, str]]:
     for line in _extract_required_experience_lines(resume_text):
         required.append((f"company timeline '{line}'", line))
 
-    education_line = _find_line_containing(
-        resume_text,
-        "Master of Engineering (Quality Systems Engineering), Concordia University, Montreal",
-    )
-    if education_line:
+    for education_line in _extract_section_body_lines(resume_text, "education"):
         required.append(("education", education_line))
 
-    languages_line = _find_line_containing(resume_text, "English | Telugu | Hindi")
-    if languages_line:
+    for languages_line in _extract_section_body_lines(resume_text, "languages"):
         required.append(("languages", languages_line))
 
     return required
@@ -772,7 +767,7 @@ def _extract_required_header_lines(resume_text: str) -> list[str]:
 
 def _extract_required_experience_lines(resume_text: str) -> list[str]:
     required_lines: list[str] = []
-    for raw_line in resume_text.splitlines():
+    for raw_line in _normalized_master_resume_lines(resume_text):
         line = raw_line.strip().lstrip("- ").strip()
         if not line:
             continue
@@ -790,13 +785,28 @@ def _extract_required_experience_lines(resume_text: str) -> list[str]:
     return _dedupe_lines(required_lines)
 
 
-def _find_line_containing(resume_text: str, expected: str) -> str:
-    normalized_expected = _normalize(expected)
+def _normalized_master_resume_lines(resume_text: str) -> list[str]:
+    lines: list[str] = []
     for raw_line in resume_text.splitlines():
-        line = raw_line.strip().lstrip("- ").strip()
-        if _normalize(line) == normalized_expected:
-            return line
-    return ""
+        line = raw_line.strip()
+        if line.startswith("|") and lines and _looks_like_company_heading_without_timeline(lines[-1]):
+            lines[-1] = f"{lines[-1]} {line}"
+        else:
+            lines.append(line)
+    return lines
+
+
+def _looks_like_company_heading_without_timeline(line: str) -> bool:
+    normalized = _normalize(line)
+    return any(
+        company in normalized
+        for company in (
+            "intact financial corporation",
+            "morgan stanley",
+            "cognizant technology solutions",
+            "virtusa consulting services",
+        )
+    ) and not _has_timeline(line)
 
 
 def _has_timeline(line: str) -> bool:
