@@ -557,17 +557,17 @@ def _select_summary_for_render(
     ai_summary: list[str],
     matched_keywords: list[str],
 ) -> list[str]:
+    generated = _build_truthful_summary_bullets(parsed_resume, matched_keywords)
+    if len(generated) == 4:
+        return generated
+
     clean_ai_summary = [
         line
         for line in _clean_resume_content_lines(ai_summary)
         if _is_recruiter_ready_summary_bullet(line)
     ]
-    if 3 <= len(clean_ai_summary) <= 4:
+    if len(clean_ai_summary) == 4:
         return clean_ai_summary[:4]
-
-    generated = _build_truthful_summary_bullets(parsed_resume, matched_keywords)
-    if 3 <= len(generated) <= 4:
-        return generated
 
     fallback = [
         line
@@ -585,25 +585,37 @@ def _build_truthful_summary_bullets(
         "\n".join(
             parsed_resume.summary_lines
             + parsed_resume.skills
+            + [experience.heading for experience in parsed_resume.experiences]
             + [bullet for experience in parsed_resume.experiences for bullet in experience.bullets]
         )
     )
     bullets: list[str] = []
-    if _any_terms_present(resume_text, ("devsecops", "devops", "application security", "secure sdlc")):
+    if _any_terms_present(resume_text, ("cloud", "azure", "aws", "openshift", "kubernetes")):
         bullets.append(
-            "DevOps and DevSecOps engineer with hands-on application security, secure SDLC, and platform automation experience."
+            "7+ years of enterprise cloud engineering experience designing, securing, automating, and operating production platforms."
         )
-    if _any_terms_present(resume_text, ("site reliability", "sre", "reliability", "slo", "sla", "incident response")):
+    if _any_terms_present(resume_text, ("platform engineering", "devsecops", "sre", "site reliability", "kubernetes")):
         bullets.append(
-            "SRE-focused background supporting reliability, incident response, production operations, and service availability."
+            "Platform Engineering, DevSecOps, and SRE experience across Kubernetes-based environments and secure delivery workflows."
         )
-    if _any_terms_present(resume_text, ("kubernetes", "aks", "eks", "openshift", "platform engineering")):
+    if _any_terms_present(resume_text, ("azure", "aws", "terraform", "gitops", "vault", "pki")):
         bullets.append(
-            "Platform engineering experience across Kubernetes, AKS, EKS, OpenShift, Azure, AWS, and hybrid cloud environments."
+            "Hands-on work with Azure, AWS, Terraform, GitOps, HashiCorp Vault, PKI, cert-manager, and mTLS practices."
         )
-    if _any_terms_present(resume_text, ("vault", "pki", "cert manager", "mtls", "identity", "oidc", "rbac")):
+    if _any_terms_present(
+        resume_text,
+        (
+            "financial",
+            "finance",
+            "insurance",
+            "morgan stanley",
+            "intact",
+            "cognizant",
+            "enterprise cloud engineering",
+        ),
+    ):
         bullets.append(
-            "Security and identity experience with HashiCorp Vault, PKI, cert-manager, mTLS, OIDC, RBAC, and certificate lifecycle practices."
+            "Financial services and insurance experience supporting secure platform delivery, reliability improvements, and governed engineering practices."
         )
     if _any_terms_present(resume_text, ("ci cd", "azure devops", "jenkins", "github actions", "terraform", "gitops")):
         bullets.append(

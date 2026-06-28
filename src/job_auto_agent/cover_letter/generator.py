@@ -346,19 +346,20 @@ def _fallback_ai_cover_letter_paragraphs(
     matched_keywords: list[str],
 ) -> list[str]:
     company = job["company"] or "your team"
-    title = job["title"]
+    title = _cover_letter_role_title(job["title"])
     relevant_terms = _select_relevant_terms(matched_keywords)
     strongest_theme = _cover_letter_theme(relevant_terms)
-    relevant_phrase = _human_join(relevant_terms[:3]) if relevant_terms else "platform and security engineering"
-    company_context = _company_context(resume_text)
+    company_phrase = _company_phrase(resume_text) or "regulated engineering environments"
     tooling_context = _cover_letter_tooling_context(resume_text)
     return [
         f"I am writing to express my interest in the {title} opportunity at {company}. "
         f"The role stands out because it connects {strongest_theme} with reliable platform delivery.",
-        f"My background includes {relevant_phrase}. {company_context} "
-        f"That experience includes {tooling_context} across secure delivery pipelines, cloud-native platforms, and operational reliability.",
+        f"In recent roles with {company_phrase}, I have worked on secure delivery pipelines and cloud-native "
+        "platforms where reliability and security are day-to-day engineering concerns. "
+        f"The most relevant thread is hands-on work with {tooling_context}, turning identity, automation, "
+        "and platform controls into repeatable delivery practices.",
         f"I would bring practical engineering judgment, clear ownership, and security-aware delivery habits to {company}. "
-        "I would welcome the opportunity to discuss how my background can support the team.",
+        "I would welcome a conversation about how I can support the team.",
     ]
 
 
@@ -423,6 +424,8 @@ def _is_recruiter_ready_cover_letter_paragraph(text: str) -> bool:
         return False
     normalized = text.lower()
     banned_phrases = (
+        "my background includes",
+        "my resume includes",
         "passion",
         "honed my skills",
         "vision",
@@ -479,6 +482,10 @@ def _cover_letter_theme(relevant_terms: list[str]) -> str:
         if term in {"vault", "pki", "identity"}:
             return "identity and secrets management"
     return "secure platform engineering"
+
+
+def _cover_letter_role_title(title: str) -> str:
+    return re.sub(r"\bdevsecops\b", "DevSecOps", title or "", flags=re.IGNORECASE)
 
 
 def _cover_letter_tooling_context(resume_text: str) -> str:
@@ -662,14 +669,21 @@ def _human_join(terms: list[str]) -> str:
 
 
 def _company_context(resume_text: str) -> str:
+    company_phrase = _company_phrase(resume_text)
+    if not company_phrase:
+        return "Experience across production engineering environments."
+    return "Experience with " + company_phrase + "."
+
+
+def _company_phrase(resume_text: str) -> str:
     companies = [
         company
         for company in ("Intact", "Morgan Stanley", "Cognizant")
         if re.search(rf"\b{re.escape(company)}\b", resume_text, flags=re.IGNORECASE)
     ]
     if not companies:
-        return "My resume reflects experience across production engineering environments."
-    return "My resume includes experience with " + _human_join(companies) + "."
+        return ""
+    return _human_join(companies)
 
 
 def _highlight_sentence(highlights: list[str]) -> str:

@@ -774,7 +774,7 @@ def test_ai_tailoring_fills_sparse_ai_bullets_from_master_resume(tmp_path, monke
     assert output.count("## Professional Experience") == 1
 
 
-def test_ai_tailoring_summary_has_three_to_four_concise_bullets(tmp_path, monkeypatch) -> None:
+def test_ai_tailoring_summary_has_four_targeted_concise_bullets(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "jobs.db"
     init_db(db_path)
     job_id = _seed_job(
@@ -816,13 +816,24 @@ def test_ai_tailoring_summary_has_three_to_four_concise_bullets(tmp_path, monkey
 
     output = result.output_path.read_text(encoding="utf-8")
     summary_bullets = _section_bullets(output, "Professional Summary")
-    assert 3 <= len(summary_bullets) <= 4
+    assert len(summary_bullets) == 4
     assert all(len(bullet.split()) <= 45 for bullet in summary_bullets)
     summary_text = " ".join(summary_bullets).lower()
-    assert "devsecops" in summary_text
-    assert "sre" in summary_text or "reliability" in summary_text
-    assert "kubernetes" in summary_text or "platform engineering" in summary_text
-    assert "vault" in summary_text or "pki" in summary_text
+    assert "7+ years" in summary_bullets[0].lower()
+    assert "enterprise cloud engineering" in summary_bullets[0].lower()
+    assert "platform engineering" in summary_bullets[1].lower()
+    assert "devsecops" in summary_bullets[1].lower()
+    assert "sre" in summary_bullets[1].lower()
+    assert "kubernetes" in summary_bullets[1].lower()
+    assert "azure" in summary_bullets[2].lower()
+    assert "aws" in summary_bullets[2].lower()
+    assert "terraform" in summary_bullets[2].lower()
+    assert "gitops" in summary_bullets[2].lower()
+    assert "vault" in summary_bullets[2].lower()
+    assert "pki" in summary_bullets[2].lower()
+    assert "financial services" in summary_bullets[3].lower()
+    assert "insurance" in summary_bullets[3].lower()
+    assert "secure platform delivery" in summary_bullets[3].lower()
     assert "strong set of skills" not in summary_text
     assert "aligns perfectly" not in summary_text
 

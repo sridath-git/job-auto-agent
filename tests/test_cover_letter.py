@@ -406,6 +406,8 @@ def test_ai_cover_letter_has_three_clean_body_paragraphs(tmp_path, monkeypatch) 
     assert all(len(paragraph.split()) <= 120 for paragraph in paragraphs)
     lowered = output.lower()
     for banned in (
+        "my background includes",
+        "my resume includes",
         "passion",
         "honed my skills",
         "vision",
