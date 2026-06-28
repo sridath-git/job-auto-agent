@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import argparse
 
+from job_auto_agent.application.workflow import (
+    ApplicationPackageError,
+    prepare_application_package,
+)
 from job_auto_agent.config import get_settings
 from job_auto_agent.cover_letter.generator import (
     CoverLetterGenerationError,
@@ -55,6 +59,22 @@ def main() -> None:
         "--ai",
         action="store_true",
         help="Use AI-assisted cover letter generation.",
+    )
+
+    application_parser = subparsers.add_parser(
+        "prepare-application",
+        help="Generate a complete application package for a saved job.",
+    )
+    application_parser.add_argument("--job-id", type=int, required=True)
+    application_parser.add_argument(
+        "--ai",
+        action="store_true",
+        help="Use AI-assisted resume and cover letter generation.",
+    )
+    application_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace an existing generated application package for this job.",
     )
 
     args = parser.parse_args()
@@ -137,6 +157,32 @@ def main() -> None:
                 print(f"Unable to generate cover letter: {exc}")
                 raise SystemExit(1) from exc
         print(f"Generated cover letter: {result.output_path}")
+        if result.warnings:
+            print("Warnings:")
+            for warning in result.warnings:
+                print(f"- {warning}")
+        return
+
+    if args.command == "prepare-application":
+        if not args.ai:
+            print("AI application package generation requires --ai.")
+            raise SystemExit(1)
+        init_db(settings.sqlite_path)
+        with connect(settings.sqlite_path) as conn:
+            try:
+                result = prepare_application_package(
+                    conn,
+                    args.job_id,
+                    settings,
+                    overwrite=args.overwrite,
+                )
+            except (ApplicationPackageError, CoverLetterGenerationError, ResumeTailoringError) as exc:
+                print(f"Unable to prepare application package: {exc}")
+                raise SystemExit(1) from exc
+        print(f"Prepared application package: {result.folder}")
+        print("Generated files:")
+        for path in result.files:
+            print(f"- {path}")
         if result.warnings:
             print("Warnings:")
             for warning in result.warnings:

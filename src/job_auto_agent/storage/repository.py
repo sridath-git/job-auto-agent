@@ -7,7 +7,16 @@ from urllib.parse import urlparse
 from job_auto_agent.models import EmailMessage, JobOpportunity, MatchResult
 
 
-JOB_STATUSES = ("New", "Interested", "Rejected", "Applied", "Follow-up")
+JOB_STATUSES = (
+    "New",
+    "Interested",
+    "Ready to Apply",
+    "Applied",
+    "Not Interested",
+    "Interview",
+    "Rejected",
+    "Offer",
+)
 
 
 def save_email(conn: sqlite3.Connection, message: EmailMessage) -> None:
