@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -104,15 +105,11 @@ def generate_ai_cover_letter_for_job(
         prompt=prompt,
         timeout_seconds=settings.ai_provider_timeout_seconds,
     )
-    _validate_raw_cover_letter_signature(draft, recruiter_name, recruiter_sender)
     output_path = _output_path(output_dir, job_id)
-    letter = _prepare_ai_cover_letter_output(
-        draft,
-        resume_text,
-        recruiter_name,
-        job["title"],
-        job["company"] or "your team",
-    )
+    paragraphs = _parse_ai_cover_letter_paragraphs(draft)
+    if paragraphs is None:
+        paragraphs = _fallback_ai_cover_letter_paragraphs(job, resume_text, matched_keywords)
+    letter = _render_ai_cover_letter_v2(paragraphs, candidate_name, recruiter_name)
     _validate_cover_letter_identity(letter, candidate_name, recruiter_name, recruiter_sender)
     output_path.write_text(letter, encoding="utf-8")
     analysis_path = _analysis_path(output_dir, job_id)
@@ -225,7 +222,7 @@ def _build_ai_cover_letter_prompt(
 ) -> str:
     matched_section = "\n".join(f"- {term}" for term in matched_keywords) or "- None"
     missing_section = "\n".join(f"- {term}" for term in missing_keywords) or "- None"
-    return f"""Generate a professional 250-400 word recruiter-ready cover letter in Markdown.
+    return f"""Generate three professional recruiter-ready cover letter body paragraphs.
 
 Hard safety rules:
 - Do not fabricate experience.
@@ -244,19 +241,22 @@ Hard safety rules:
 - Use neutral source wording: I am writing to express my interest in the {job["title"]} opportunity at {job["company"] or "your team"}.
 - Do not say the role was advertised on LinkedIn unless the source is explicitly configured as LinkedIn.
 - Do not use generic phrases like "align perfectly" or "honed a strong set of skills".
-- Signature must always be exactly:
-  Sincerely,
+- Do not write the greeting.
+- Do not write the signature.
+- Do not sign the letter.
+- Return JSON only. Do not return Markdown, code fences, headings, notes, or analysis.
 
-  {candidate_name}
+The app owns the cover letter structure and will add the greeting and signature.
+You may only provide the three body paragraphs.
 
-The output must contain only recruiter-facing cover letter content.
-
-Structure the letter naturally with:
-- Introduction
-- Why I am interested
-- Relevant experience
-- Why I fit the role
-- Closing
+Required JSON schema:
+{{
+  "paragraphs": [
+    "Introduction and interest paragraph.",
+    "Relevant experience paragraph using only master resume facts.",
+    "Fit and closing-value paragraph."
+  ]
+}}
 
 Target job:
 - Title: {job["title"]}
@@ -293,6 +293,85 @@ def _prepare_ai_cover_letter_output(
         sanitized = _ensure_neutral_opening(sanitized, role, company)
     sanitized = _ensure_candidate_signature(sanitized, candidate_name)
     return sanitized
+
+
+def _parse_ai_cover_letter_paragraphs(draft: str) -> list[str] | None:
+    cleaned = _strip_code_fences(draft).strip()
+    try:
+        value = json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        try:
+            value = json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(value, dict):
+        return None
+    paragraphs = value.get("paragraphs")
+    if not isinstance(paragraphs, list):
+        return None
+    sanitized = [_sanitize_cover_letter_paragraph(str(paragraph)) for paragraph in paragraphs]
+    sanitized = [paragraph for paragraph in sanitized if paragraph]
+    if len(sanitized) != 3:
+        return None
+    return sanitized
+
+
+def _render_ai_cover_letter_v2(
+    paragraphs: list[str],
+    candidate_name: str,
+    recruiter_name: str | None,
+) -> str:
+    greeting = f"Dear {recruiter_name}," if recruiter_name else "Dear Hiring Manager,"
+    body = "\n\n".join(_sanitize_cover_letter_paragraph(paragraph) for paragraph in paragraphs)
+    letter = f"{greeting}\n\n{body}\n\nSincerely,\n\n{candidate_name}\n"
+    return _sanitize_cover_letter_text(letter)
+
+
+def _fallback_ai_cover_letter_paragraphs(
+    job: sqlite3.Row,
+    resume_text: str,
+    matched_keywords: list[str],
+) -> list[str]:
+    company = job["company"] or "your team"
+    title = job["title"]
+    relevant_terms = _select_relevant_terms(matched_keywords)
+    relevant_phrase = _human_join(relevant_terms) if relevant_terms else "relevant engineering experience"
+    highlights = _select_resume_highlights(resume_text, matched_keywords, limit=2)
+    highlight_text = " ".join(highlights) if highlights else (
+        "My resume reflects production engineering experience across automation, reliability, "
+        "cloud infrastructure, and secure platform operations."
+    )
+    return [
+        f"I am writing to express my interest in the {title} opportunity at {company}. "
+        "The role stands out because it connects reliable engineering delivery with practical security and platform operations.",
+        f"My background includes {relevant_phrase}. {highlight_text}",
+        "I would bring a practical ownership mindset, careful production judgment, and experience working across engineering, "
+        "infrastructure, and security priorities to help the team deliver dependable systems.",
+    ]
+
+
+def _sanitize_cover_letter_paragraph(text: str) -> str:
+    text = _remove_internal_sections(_strip_code_fences(text))
+    text = _remove_closing_blocks(text)
+    lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.match(r"^\s*Dear\s+.+,\s*$", stripped, flags=re.IGNORECASE):
+            continue
+        if re.match(r"^\s*(Sincerely|Best regards|Regards|Thank you),?\s*$", stripped, flags=re.IGNORECASE):
+            continue
+        if stripped == "Sridath Jeelugula":
+            continue
+        if _contains_contact_info(stripped) or _is_internal_heading(stripped):
+            continue
+        lines.append(_sanitize_sentence(stripped))
+    return re.sub(r"\s{2,}", " ", " ".join(line for line in lines if line)).strip()
 
 
 def _extract_candidate_name(resume_text: str) -> str:

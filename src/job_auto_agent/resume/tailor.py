@@ -58,6 +58,22 @@ class TailoredResumeResult:
     missing_keywords: list[str]
 
 
+@dataclass(frozen=True)
+class ResumeExperience:
+    heading: str
+    bullets: list[str]
+
+
+@dataclass(frozen=True)
+class ParsedResume:
+    header_lines: list[str]
+    summary_lines: list[str]
+    skills: list[str]
+    experiences: list[ResumeExperience]
+    education_lines: list[str]
+    language_lines: list[str]
+
+
 def tailor_resume_for_job(
     conn: sqlite3.Connection,
     job_id: int,
@@ -113,9 +129,10 @@ def tailor_resume_with_ai_for_job(
 
     job = _load_tailoring_inputs(conn, job_id, master_resume_path, output_dir, overwrite)
     resume_text = master_resume_path.read_text(encoding="utf-8")
+    parsed_resume = parse_master_resume(resume_text)
     job_keywords = extract_job_keywords(job["title"], job["description"])
     matched_keywords, missing_keywords = compare_keywords(job_keywords, resume_text)
-    prompt = build_ai_tailoring_prompt(job, resume_text, matched_keywords, missing_keywords)
+    prompt = build_ai_tailoring_prompt(job, parsed_resume, matched_keywords, missing_keywords)
     draft = _call_openai_compatible_provider(
         api_key=api_key,
         base_url=settings.openai_base_url,
@@ -124,7 +141,8 @@ def tailor_resume_with_ai_for_job(
         timeout_seconds=settings.ai_provider_timeout_seconds,
     )
 
-    prepared_resume = _prepare_ai_tailored_resume(draft, resume_text)
+    ai_rewrites = _parse_ai_resume_rewrites(draft, parsed_resume)
+    prepared_resume = _render_ai_tailored_resume_v2(parsed_resume, ai_rewrites)
     _validate_ai_tailored_resume(prepared_resume, resume_text)
 
     output_path = output_dir / f"job_{job_id}_tailored_resume.md"
@@ -165,37 +183,51 @@ def compare_keywords(job_keywords: list[str], resume_text: str) -> tuple[list[st
 
 def build_ai_tailoring_prompt(
     job: sqlite3.Row,
-    resume_text: str,
+    parsed_resume: ParsedResume | str,
     matched_keywords: list[str],
     missing_keywords: list[str],
 ) -> str:
+    if isinstance(parsed_resume, str):
+        parsed_resume = parse_master_resume(parsed_resume)
     matched_section = "\n".join(f"- {term}" for term in matched_keywords) or "- None"
     missing_section = "\n".join(f"- {term}" for term in missing_keywords) or "- None"
+    experience_section = "\n".join(
+        json.dumps(
+            {
+                "heading": experience.heading,
+                "bullets": experience.bullets,
+            },
+            ensure_ascii=False,
+        )
+        for experience in parsed_resume.experiences
+    ) or "[]"
     return f"""You are helping create a manual tailored resume draft.
 
 Hard safety rules:
 - Do not fabricate anything.
 - Do not invent companies, dates, roles, tools, metrics, certifications, degrees, or skills.
 - Do not add skills that are not present in the master resume.
-- Do not include phone numbers, email addresses, LinkedIn URLs, or home locations anywhere except the top contact header if they already appear in the master resume.
-- Do not include safety notes, missing keyword sections, keyword analysis, debug notes, or manual editing sections in the resume output.
-- Do not wrap the output in Markdown code fences.
-- Do not include an Overview section.
+- You must not write the final resume.
+- Return structured JSON only. Do not return Markdown, headings, code fences, notes, explanations, or analysis.
+- You may rewrite only professional summary lines and existing experience bullets.
+- You may reorder only the existing skills and existing bullets.
 - Preserve truthful experience only.
-- Reorder, emphasize, and rewrite existing resume content for relevance.
-- Preserve the candidate header exactly from the master resume, including name, professional title line, location, phone number, email address, and LinkedIn URL.
-- Preserve every company name, role title, role location, and employment timeline exactly as shown in the master resume.
-- Preserve education exactly as shown in the master resume.
-- Preserve languages exactly as shown in the master resume.
+- Preserve the candidate header exactly from the master resume; the app owns the header rendering.
+- Use exact experience headings from the provided parsed resume.
+- Do not modify company names, role titles, role locations, employment timelines, education, languages, or contact details.
 - Do not auto-apply, send emails, or upload anything.
 
-The output must be recruiter-facing Markdown only and must use this structure:
-1. # Name and contact header
-2. ## Professional Summary
-3. ## Core Skills & Tool Stack
-4. ## Professional Experience
-5. ## Education
-6. ## Languages
+Required JSON schema:
+{{
+  "summary": ["one to three recruiter-ready summary lines"],
+  "skills": ["existing skill exactly as provided, reordered for the job"],
+  "experience": [
+    {{
+      "heading": "exact heading copied from parsed resume",
+      "bullets": ["rewritten truthful bullets based only on that heading's existing bullets"]
+    }}
+  ]
+}}
 
 Do not include the missing keyword list in the resume. It is provided only so you know what not to claim.
 
@@ -214,8 +246,17 @@ Keywords present in the master resume:
 Missing job keywords that must not be added as claimed experience:
 {missing_section}
 
-Master resume:
-{resume_text}
+Parsed master resume fields owned by the app:
+Header lines, education, and languages are fixed and will be rendered by the app, not by you.
+
+Professional summary lines:
+{json.dumps(parsed_resume.summary_lines, ensure_ascii=False)}
+
+Existing skills:
+{json.dumps(parsed_resume.skills, ensure_ascii=False)}
+
+Experience groups. Use these exact headings:
+{experience_section}
 """
 
 
@@ -290,6 +331,192 @@ def _call_openai_compatible_provider(
         return body["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise AITailoringProviderError("AI provider response did not include message content.") from exc
+
+
+def parse_master_resume(resume_text: str) -> ParsedResume:
+    sections: dict[str, list[str]] = {
+        "summary": [],
+        "skills": [],
+        "experience": [],
+        "education": [],
+        "languages": [],
+    }
+    header_lines: list[str] = []
+    current: str | None = None
+
+    for raw_line in _normalized_master_resume_lines(resume_text):
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            section = _classify_heading(stripped)
+            if section in sections:
+                current = section
+                continue
+        if current is None:
+            header_lines.append(stripped)
+        else:
+            sections[current].append(stripped)
+
+    return ParsedResume(
+        header_lines=_dedupe_lines(header_lines) or ["# Candidate"],
+        summary_lines=_clean_resume_content_lines(sections["summary"]),
+        skills=_parse_resume_skills(sections["skills"]),
+        experiences=_parse_resume_experiences(sections["experience"]),
+        education_lines=_clean_resume_content_lines(sections["education"]),
+        language_lines=_clean_resume_content_lines(sections["languages"]),
+    )
+
+
+def _parse_ai_resume_rewrites(draft: str, parsed_resume: ParsedResume) -> dict:
+    parsed_json = _extract_json_object(draft)
+    if not isinstance(parsed_json, dict):
+        return {}
+
+    allowed_headings = {experience.heading for experience in parsed_resume.experiences}
+    rewrites: dict[str, object] = {}
+
+    summary = parsed_json.get("summary")
+    if isinstance(summary, list):
+        clean_summary = _clean_resume_content_lines([str(line) for line in summary])
+        if clean_summary:
+            rewrites["summary"] = clean_summary[:3]
+
+    skills = parsed_json.get("skills")
+    if isinstance(skills, list):
+        rewrites["skills"] = _filter_existing_skills([str(skill) for skill in skills], parsed_resume.skills)
+
+    experience_rewrites: dict[str, list[str]] = {}
+    experience_items = parsed_json.get("experience")
+    if isinstance(experience_items, list):
+        for item in experience_items:
+            if not isinstance(item, dict):
+                continue
+            heading = str(item.get("heading", "")).strip()
+            bullets = item.get("bullets")
+            if heading not in allowed_headings or not isinstance(bullets, list):
+                continue
+            clean_bullets = _clean_resume_content_lines([str(bullet) for bullet in bullets])
+            if clean_bullets:
+                experience_rewrites[heading] = clean_bullets
+    if experience_rewrites:
+        rewrites["experience"] = experience_rewrites
+
+    return rewrites
+
+
+def _render_ai_tailored_resume_v2(parsed_resume: ParsedResume, ai_rewrites: dict) -> str:
+    summary_lines = ai_rewrites.get("summary") if isinstance(ai_rewrites.get("summary"), list) else None
+    skill_lines = ai_rewrites.get("skills") if isinstance(ai_rewrites.get("skills"), list) else None
+    experience_rewrites = ai_rewrites.get("experience") if isinstance(ai_rewrites.get("experience"), dict) else {}
+
+    output_lines: list[str] = []
+    output_lines.extend(parsed_resume.header_lines)
+    output_lines.extend(["", "## Professional Summary", ""])
+    output_lines.extend(_render_resume_lines(summary_lines or parsed_resume.summary_lines or ["Professional summary not specified in master resume."]))
+    output_lines.extend(["", "## Core Skills & Tool Stack", ""])
+    output_lines.extend(_render_resume_lines(skill_lines or parsed_resume.skills or ["Skills not specified in master resume."]))
+    output_lines.extend(["", "## Professional Experience", ""])
+    for experience in parsed_resume.experiences:
+        output_lines.append(experience.heading)
+        bullets = experience_rewrites.get(experience.heading) if isinstance(experience_rewrites, dict) else None
+        output_lines.extend(_render_resume_lines(bullets or experience.bullets or ["Experience details not specified in master resume."]))
+        output_lines.append("")
+    output_lines.extend(["## Education", ""])
+    output_lines.extend(_render_resume_lines(parsed_resume.education_lines or ["Education not specified in master resume."]))
+    output_lines.extend(["", "## Languages", ""])
+    output_lines.extend(_render_resume_lines(parsed_resume.language_lines or ["Languages not specified in master resume."]))
+
+    rendered = "\n".join(output_lines)
+    rendered = _strip_markdown_code_fences(rendered)
+    rendered = _remove_internal_resume_sections(rendered)
+    return re.sub(r"\n{3,}", "\n\n", rendered).strip() + "\n"
+
+
+def _extract_json_object(text: str) -> dict | None:
+    cleaned = _strip_markdown_code_fences(text).strip()
+    try:
+        value = json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        try:
+            value = json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+    return value if isinstance(value, dict) else None
+
+
+def _parse_resume_experiences(lines: list[str]) -> list[ResumeExperience]:
+    experiences: list[ResumeExperience] = []
+    current_heading: str | None = None
+    current_bullets: list[str] = []
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        if _is_resume_experience_heading(line):
+            if current_heading:
+                experiences.append(ResumeExperience(current_heading, _clean_resume_content_lines(current_bullets)))
+            current_heading = line.lstrip("#").strip()
+            current_bullets = []
+        elif current_heading:
+            current_bullets.append(line)
+        else:
+            current_heading = "Experience"
+            current_bullets = [line]
+    if current_heading:
+        experiences.append(ResumeExperience(current_heading, _clean_resume_content_lines(current_bullets)))
+    return experiences
+
+
+def _is_resume_experience_heading(line: str) -> bool:
+    stripped = line.strip().lstrip("#").strip()
+    if stripped.startswith("- "):
+        return False
+    return _has_timeline(stripped) or _looks_like_company_heading_without_timeline(stripped)
+
+
+def _parse_resume_skills(lines: list[str]) -> list[str]:
+    skills: list[str] = []
+    for line in lines:
+        clean_line = line.strip().lstrip("- ").strip()
+        if not clean_line:
+            continue
+        if "," in clean_line and not re.search(r"\b\d{4}\b", clean_line):
+            skills.extend(part.strip() for part in clean_line.split(","))
+        else:
+            skills.append(clean_line)
+    return _dedupe_lines(_clean_resume_content_lines(skills))
+
+
+def _filter_existing_skills(candidate_skills: list[str], existing_skills: list[str]) -> list[str]:
+    by_key = {_normalize(skill): skill for skill in existing_skills}
+    ordered = [by_key[_normalize(skill)] for skill in candidate_skills if _normalize(skill) in by_key]
+    remainder = [skill for skill in existing_skills if _normalize(skill) not in {_normalize(item) for item in ordered}]
+    return _dedupe_lines(ordered + remainder)
+
+
+def _clean_resume_content_lines(lines: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    for line in lines:
+        clean_line = str(line).strip()
+        if not clean_line:
+            continue
+        clean_line = clean_line.lstrip("- ").strip()
+        if not clean_line or clean_line.startswith("#"):
+            continue
+        if any(blocked in _normalize(clean_line) for blocked in ("safety notes", "missing keywords", "truthfulness notes")):
+            continue
+        cleaned.append(clean_line)
+    return _dedupe_lines(cleaned)
+
+
+def _render_resume_lines(lines: list[str]) -> list[str]:
+    return [line if line.startswith("- ") else f"- {line}" for line in lines]
 
 
 def _prepare_ai_tailored_resume(draft: str, resume_text: str | None = None) -> str:

@@ -510,6 +510,7 @@ English | Telugu | Hindi
         )
 
     output = result.output_path.read_text(encoding="utf-8")
+    assert output.count("# Sridath Jeelugula") == 1
     assert "Sridath Jeelugula" in output
     assert "Senior DevSecOps Security Engineer" in output
     assert "Montreal, QC" in output
@@ -528,6 +529,51 @@ English | Telugu | Hindi
     assert "English | Telugu | Hindi" in output
     assert "```" not in output
     assert "## Overview" not in output
+
+
+def test_ai_tailoring_invalid_json_falls_back_without_duplicate_header(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path)
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(_full_master_resume(), encoding="utf-8")
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        assert "Required JSON schema" in prompt
+        return """```markdown
+# Duplicate AI Header
+
+## Overview
+
+Broken full resume draft.
+```"""
+
+    monkeypatch.setattr(tailor_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = tailor_resume_with_ai_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "generated",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert output.count("# Sridath Jeelugula") == 1
+    assert "# Duplicate AI Header" not in output
+    assert "## Overview" not in output
+    assert "```" not in output
+    assert "Cognizant Technology Solutions — Site Reliability Engineer / DevSecOps Engineer | Montreal, QC | Nov 2020 – Sept 2024" in output
+    assert "Master of Engineering (Quality Systems Engineering), Concordia University, Montreal | 2019" in output
+    assert "English | Telugu | Hindi" in output
 
 
 def test_ai_tailoring_repairs_missing_timelines_from_master_resume(tmp_path, monkeypatch) -> None:

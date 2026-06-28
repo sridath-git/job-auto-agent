@@ -5,7 +5,6 @@ import pytest
 from job_auto_agent.config import Settings
 from job_auto_agent.cover_letter import generator as cover_letter_module
 from job_auto_agent.cover_letter.generator import (
-    CoverLetterValidationError,
     CoverLetterJobNotFoundError,
     generate_ai_cover_letter_for_job,
     generate_cover_letter_for_job,
@@ -270,6 +269,55 @@ Sridath Jeelugula
     assert "jane.recruiter@example.com" not in signature
 
 
+def test_ai_cover_letter_uses_structured_paragraphs_with_app_owned_envelope(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path, sender="Jane Recruiter <jane.recruiter@example.com>")
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(
+        "Sridath Jeelugula\nKubernetes, Terraform, DevSecOps, and reliability experience.",
+        encoding="utf-8",
+    )
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        assert "Return JSON only" in prompt
+        assert "Do not write the greeting" in prompt
+        assert "Do not write the signature" in prompt
+        return """{
+  "paragraphs": [
+    "I am writing to express my interest in the Platform Security Engineer opportunity at ExampleCo.",
+    "My resume includes Kubernetes, Terraform, DevSecOps, and reliability experience that is relevant to this opportunity.",
+    "I would bring practical production judgment and security-minded platform engineering experience to the team."
+  ]
+}"""
+
+    monkeypatch.setattr(cover_letter_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = generate_ai_cover_letter_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "letters",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert output.startswith("Dear Jane Recruiter,")
+    assert output.count("Dear ") == 1
+    assert output.count("Sincerely,") == 1
+    assert output.rstrip().endswith("Sincerely,\n\nSridath Jeelugula")
+    assert "align perfectly" not in output
+    assert "as advertised on LinkedIn" not in output
+
+
 def test_ai_cover_letter_removes_linkedin_greeting_bad_phrases_and_duplicate_signatures(
     tmp_path,
     monkeypatch,
@@ -331,7 +379,7 @@ Sridath Jeelugula
     assert output.rstrip().endswith("Sincerely,\n\nSridath Jeelugula")
 
 
-def test_ai_cover_letter_fails_when_recruiter_is_used_in_signature(tmp_path, monkeypatch) -> None:
+def test_ai_cover_letter_app_owns_signature_when_ai_returns_recruiter_signature(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "jobs.db"
     init_db(db_path)
     job_id = _seed_job(db_path, sender="Jane Recruiter <jane.recruiter@example.com>")
@@ -361,14 +409,22 @@ Jane Recruiter
     monkeypatch.setattr(cover_letter_module, "_call_openai_compatible_provider", fake_provider)
 
     with connect(db_path) as conn:
-        with pytest.raises(CoverLetterValidationError, match="recruiter identity appears in signature"):
-            generate_ai_cover_letter_for_job(
-                conn,
-                job_id,
-                settings,
-                master_resume_path=resume_path,
-                output_dir=tmp_path / "letters",
-            )
+        result = generate_ai_cover_letter_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "letters",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert output.startswith("Dear Jane Recruiter,")
+    assert output.count("Dear ") == 1
+    assert output.count("Sincerely,") == 1
+    assert output.rstrip().endswith("Sincerely,\n\nSridath Jeelugula")
+    signature = output.split("Sincerely,", maxsplit=1)[1]
+    assert "Jane Recruiter" not in signature
+    assert "jane.recruiter@example.com" not in signature
 
 
 def test_cover_letter_excludes_contact_details_and_internal_sections(tmp_path) -> None:
