@@ -491,7 +491,7 @@ Virtusa Consulting Services — Build & Release Engineer | Hyderabad, India | Ja
 
 ## Education
 
-Master of Engineering (Quality Systems Engineering), Concordia University, Montreal
+Master of Engineering (Quality Systems Engineering), Concordia University, Montreal | 2019
 
 ## Languages
 
@@ -523,7 +523,8 @@ English | Telugu | Hindi
         "Montreal, QC | Nov 2020 – Sept 2024"
     ) in output
     assert "Virtusa Consulting Services — Build & Release Engineer | Hyderabad, India | Jan 2015 – Apr 2017" in output
-    assert "Master of Engineering (Quality Systems Engineering), Concordia University, Montreal" in output
+    assert "Master of Engineering (Quality Systems Engineering), Concordia University, Montreal | 2019" in output
+    assert "Master of Engineering (Quality Systems Engineering), Concordia University, Montreal | 2017" not in output
     assert "English | Telugu | Hindi" in output
     assert "```" not in output
     assert "## Overview" not in output
@@ -558,7 +559,7 @@ Morgan Stanley — Site Reliability Engineer | Montreal, QC | Dec 2024 – Prese
 
 ## Education
 
-Master of Engineering (Quality Systems Engineering), Concordia University, Montreal
+Master of Engineering (Quality Systems Engineering), Concordia University, Montreal | 2017
 
 ## Languages
 
@@ -634,7 +635,8 @@ English | Telugu | Hindi
         )
 
     output = result.output_path.read_text(encoding="utf-8")
-    assert "Master of Engineering (Quality Systems Engineering), Concordia University, Montreal" in output
+    assert "Master of Engineering (Quality Systems Engineering), Concordia University, Montreal | 2019" in output
+    assert "Master of Engineering (Quality Systems Engineering), Concordia University, Montreal | 2017" not in output
     assert "```" not in output
     assert "## Overview" not in output
 
@@ -819,14 +821,15 @@ Intact Financial Corporation — Senior DevSecOps Security Engineer | Jan 2026 �
 - Kubernetes, Vault, PKI, and Terraform security automation.
 Morgan Stanley — Site Reliability Engineer | Montreal, QC | Dec 2024 – Present
 - Reliability engineering for cloud platforms.
-Cognizant Technology Solutions — Site Reliability Engineer / DevSecOps Engineer | Montreal, QC | Nov 2020 – Sept 2024
+Cognizant Technology Solutions — Site Reliability Engineer / DevSecOps Engineer | Montreal, QC
+| Nov 2020 – Sept 2024
 - DevSecOps automation and platform support.
 Virtusa Consulting Services — Build & Release Engineer | Hyderabad, India | Jan 2015 – Apr 2017
 - Build and release automation.
 
 ## Education
 
-Master of Engineering (Quality Systems Engineering), Concordia University, Montreal
+Master of Engineering (Quality Systems Engineering), Concordia University, Montreal | 2019
 
 ## Languages
 

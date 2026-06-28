@@ -294,7 +294,8 @@ def test_ai_cover_letter_removes_linkedin_greeting_bad_phrases_and_duplicate_sig
         return """Dear Manal Khaldi via LinkedIn,
 
 Thank you for your interest in my resume. I have been selected as a strong fit.
-My Kubernetes and Terraform experience aligns with the role.
+My Kubernetes and Terraform experience align perfectly with the role as advertised on LinkedIn.
+I have honed a strong set of skills in platform engineering.
 
 Best regards,
 
@@ -319,8 +320,12 @@ Sridath Jeelugula
     output = result.output_path.read_text(encoding="utf-8")
     assert output.startswith("Dear Manal Khaldi,")
     assert "via LinkedIn" not in output
+    assert "as advertised on LinkedIn" not in output
+    assert "align perfectly" not in output
+    assert "honed a strong set of skills" not in output
     assert "Thank you for your interest in my resume" not in output
     assert "I have been selected as" not in output
+    assert "I am writing to express my interest in the Platform Security Engineer opportunity at ExampleCo." in output
     assert "Best regards" not in output
     assert output.count("Sincerely,") == 1
     assert output.rstrip().endswith("Sincerely,\n\nSridath Jeelugula")
