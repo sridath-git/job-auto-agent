@@ -425,11 +425,12 @@ def _render_ai_tailored_resume_v2(
     summary_lines = ai_rewrites.get("summary") if isinstance(ai_rewrites.get("summary"), list) else None
     skill_lines = ai_rewrites.get("skills") if isinstance(ai_rewrites.get("skills"), list) else None
     experience_rewrites = ai_rewrites.get("experience") if isinstance(ai_rewrites.get("experience"), dict) else {}
+    rendered_summary = _select_summary_for_render(parsed_resume, summary_lines or [], matched_keywords or [])
 
     output_lines: list[str] = []
     output_lines.extend(parsed_resume.header_lines)
     output_lines.extend(["", "## Professional Summary", ""])
-    output_lines.extend(_render_resume_lines(summary_lines or parsed_resume.summary_lines or ["Professional summary not specified in master resume."]))
+    output_lines.extend(_render_resume_lines(rendered_summary))
     output_lines.extend(["", "## Core Skills & Tool Stack", ""])
     output_lines.extend(_render_resume_lines(skill_lines or parsed_resume.skills or ["Skills not specified in master resume."]))
     output_lines.extend(["", "## Professional Experience", ""])
@@ -549,6 +550,96 @@ def _experience_bullet_bounds(heading: str, master_bullet_count: int) -> tuple[i
     if "virtusa consulting services" in normalized:
         return min(master_bullet_count, 3), min(master_bullet_count, 4) or 4
     return min(master_bullet_count, 3), min(master_bullet_count, 6) or 6
+
+
+def _select_summary_for_render(
+    parsed_resume: ParsedResume,
+    ai_summary: list[str],
+    matched_keywords: list[str],
+) -> list[str]:
+    clean_ai_summary = [
+        line
+        for line in _clean_resume_content_lines(ai_summary)
+        if _is_recruiter_ready_summary_bullet(line)
+    ]
+    if 3 <= len(clean_ai_summary) <= 4:
+        return clean_ai_summary[:4]
+
+    generated = _build_truthful_summary_bullets(parsed_resume, matched_keywords)
+    if 3 <= len(generated) <= 4:
+        return generated
+
+    fallback = [
+        line
+        for line in _clean_resume_content_lines(parsed_resume.summary_lines)
+        if _is_recruiter_ready_summary_bullet(line)
+    ]
+    return (generated + fallback)[:4] or ["DevSecOps, SRE, and platform engineering experience based on the master resume."]
+
+
+def _build_truthful_summary_bullets(
+    parsed_resume: ParsedResume,
+    matched_keywords: list[str],
+) -> list[str]:
+    resume_text = _normalize(
+        "\n".join(
+            parsed_resume.summary_lines
+            + parsed_resume.skills
+            + [bullet for experience in parsed_resume.experiences for bullet in experience.bullets]
+        )
+    )
+    bullets: list[str] = []
+    if _any_terms_present(resume_text, ("devsecops", "devops", "application security", "secure sdlc")):
+        bullets.append(
+            "DevOps and DevSecOps engineer with hands-on application security, secure SDLC, and platform automation experience."
+        )
+    if _any_terms_present(resume_text, ("site reliability", "sre", "reliability", "slo", "sla", "incident response")):
+        bullets.append(
+            "SRE-focused background supporting reliability, incident response, production operations, and service availability."
+        )
+    if _any_terms_present(resume_text, ("kubernetes", "aks", "eks", "openshift", "platform engineering")):
+        bullets.append(
+            "Platform engineering experience across Kubernetes, AKS, EKS, OpenShift, Azure, AWS, and hybrid cloud environments."
+        )
+    if _any_terms_present(resume_text, ("vault", "pki", "cert manager", "mtls", "identity", "oidc", "rbac")):
+        bullets.append(
+            "Security and identity experience with HashiCorp Vault, PKI, cert-manager, mTLS, OIDC, RBAC, and certificate lifecycle practices."
+        )
+    if _any_terms_present(resume_text, ("ci cd", "azure devops", "jenkins", "github actions", "terraform", "gitops")):
+        bullets.append(
+            "Automation experience using CI/CD, Azure DevOps, Jenkins, GitHub Actions, Terraform, Helm, and GitOps workflows."
+        )
+    if _any_terms_present(resume_text, ("sast", "dast", "sca", "github advanced security", "sonarqube", "veracode", "invicti")):
+        bullets.append(
+            "Application security tooling experience with SAST, DAST, SCA, GitHub Advanced Security, SonarQube, Veracode, and Invicti."
+        )
+
+    _ = matched_keywords
+    return _dedupe_lines(bullets)[:4]
+
+
+def _is_recruiter_ready_summary_bullet(line: str) -> bool:
+    if not line or _word_count(line) > 45:
+        return False
+    normalized = _normalize(line)
+    filler_phrases = (
+        "professional summary not specified",
+        "strong set of skills",
+        "align perfectly",
+        "aligns perfectly",
+        "passion",
+        "honed my skills",
+        "vision",
+    )
+    return not any(phrase in normalized for phrase in filler_phrases)
+
+
+def _any_terms_present(normalized_text: str, terms: tuple[str, ...]) -> bool:
+    return any(_contains_term(normalized_text, term) for term in terms)
+
+
+def _word_count(text: str) -> int:
+    return len(text.split())
 
 
 def _select_prompt_skills(skills: list[str], matched_keywords: list[str], limit: int) -> list[str]:

@@ -774,6 +774,59 @@ def test_ai_tailoring_fills_sparse_ai_bullets_from_master_resume(tmp_path, monke
     assert output.count("## Professional Experience") == 1
 
 
+def test_ai_tailoring_summary_has_three_to_four_concise_bullets(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(
+        db_path,
+        title="DevSecOps Cloud Identity SRE",
+        description="DevSecOps, SRE, Platform Engineering, Kubernetes, Vault, PKI, Terraform, GitOps, SAST, DAST, and SCA.",
+    )
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(_quality_master_resume(), encoding="utf-8")
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        return json.dumps(
+            {
+                "summary": [
+                    "Generic professional summary with a strong set of skills that aligns perfectly with everything."
+                ],
+                "skills": [],
+                "experience": [],
+            }
+        )
+
+    monkeypatch.setattr(tailor_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = tailor_resume_with_ai_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "generated",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    summary_bullets = _section_bullets(output, "Professional Summary")
+    assert 3 <= len(summary_bullets) <= 4
+    assert all(len(bullet.split()) <= 45 for bullet in summary_bullets)
+    summary_text = " ".join(summary_bullets).lower()
+    assert "devsecops" in summary_text
+    assert "sre" in summary_text or "reliability" in summary_text
+    assert "kubernetes" in summary_text or "platform engineering" in summary_text
+    assert "vault" in summary_text or "pki" in summary_text
+    assert "strong set of skills" not in summary_text
+    assert "aligns perfectly" not in summary_text
+
+
 def test_ai_tailoring_repairs_missing_timelines_from_master_resume(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "jobs.db"
     init_db(db_path)
@@ -1008,6 +1061,23 @@ def _body_after_header(markdown: str) -> str:
     if "## Professional Summary" not in markdown:
         return markdown
     return markdown.split("## Professional Summary", maxsplit=1)[1]
+
+
+def _section_bullets(markdown: str, section_name: str) -> list[str]:
+    lines = markdown.splitlines()
+    heading = f"## {section_name}"
+    try:
+        start = lines.index(heading) + 1
+    except ValueError:
+        return []
+    bullets: list[str] = []
+    for line in lines[start:]:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            break
+        if stripped.startswith("- "):
+            bullets.append(stripped.removeprefix("- ").strip())
+    return bullets
 
 
 def _bullet_count_for_heading(markdown: str, heading: str) -> int:

@@ -247,6 +247,11 @@ Hard safety rules:
 - Do not write the signature.
 - Do not sign the letter.
 - Return JSON only. Do not return Markdown, code fences, headings, notes, or analysis.
+- Paragraph 1 must be 2-3 sentences and mention one strongest matching theme.
+- Paragraph 2 must be 3-5 sentences and focus on 2-3 strongest matches from the master resume.
+- Paragraph 3 must be 2-3 sentences and close professionally without exaggeration.
+- Keep every paragraph under 120 words.
+- Do not use labels or headings inside paragraphs.
 
 The app owns the cover letter structure and will add the greeting and signature.
 You may only provide the three body paragraphs.
@@ -319,7 +324,7 @@ def _parse_ai_cover_letter_paragraphs(draft: str) -> list[str] | None:
     sanitized = [paragraph for paragraph in sanitized if paragraph]
     if len(sanitized) != 3:
         return None
-    if any(_is_placeholder_cover_letter_paragraph(paragraph) for paragraph in sanitized):
+    if any(not _is_recruiter_ready_cover_letter_paragraph(paragraph) for paragraph in sanitized):
         return None
     return sanitized
 
@@ -343,18 +348,17 @@ def _fallback_ai_cover_letter_paragraphs(
     company = job["company"] or "your team"
     title = job["title"]
     relevant_terms = _select_relevant_terms(matched_keywords)
-    relevant_phrase = _human_join(relevant_terms) if relevant_terms else "relevant engineering experience"
-    highlights = _select_resume_highlights(resume_text, matched_keywords, limit=2)
-    highlight_text = " ".join(highlights) if highlights else (
-        "My resume reflects production engineering experience across automation, reliability, "
-        "cloud infrastructure, and secure platform operations."
-    )
+    strongest_theme = _cover_letter_theme(relevant_terms)
+    relevant_phrase = _human_join(relevant_terms[:3]) if relevant_terms else "platform and security engineering"
+    company_context = _company_context(resume_text)
+    tooling_context = _cover_letter_tooling_context(resume_text)
     return [
         f"I am writing to express my interest in the {title} opportunity at {company}. "
-        "The role stands out because it connects reliable engineering delivery with practical security and platform operations.",
-        f"My background includes {relevant_phrase}. {highlight_text}",
-        "I would bring a practical ownership mindset, careful production judgment, and experience working across engineering, "
-        "infrastructure, and security priorities to help the team deliver dependable systems.",
+        f"The role stands out because it connects {strongest_theme} with reliable platform delivery.",
+        f"My background includes {relevant_phrase}. {company_context} "
+        f"That experience includes {tooling_context} across secure delivery pipelines, cloud-native platforms, and operational reliability.",
+        f"I would bring practical engineering judgment, clear ownership, and security-aware delivery habits to {company}. "
+        "I would welcome the opportunity to discuss how my background can support the team.",
     ]
 
 
@@ -412,6 +416,47 @@ def _sanitize_cover_letter_paragraph(text: str) -> str:
     return re.sub(r"\s{2,}", " ", " ".join(line for line in lines if line)).strip()
 
 
+def _is_recruiter_ready_cover_letter_paragraph(text: str) -> bool:
+    if not text or _word_count(text) > 120:
+        return False
+    if _is_placeholder_cover_letter_paragraph(text):
+        return False
+    normalized = text.lower()
+    banned_phrases = (
+        "passion",
+        "honed my skills",
+        "vision",
+        "align perfectly",
+        "aligns perfectly",
+        "strong set of skills",
+        "devsecops | cloud identity experience:",
+        "site reliability engineer experience:",
+        "key responsibilities:",
+        "skills & tools:",
+    )
+    if any(phrase in normalized for phrase in banned_phrases):
+        return False
+    if _has_unsupported_intact_reliability_claim(normalized):
+        return False
+    if re.search(r"(?im)^\s*(devsecops|site reliability|key responsibilities|skills\s*&\s*tools).+:\s*", text):
+        return False
+    return True
+
+
+def _has_unsupported_intact_reliability_claim(normalized_text: str) -> bool:
+    if "intact" not in normalized_text:
+        return False
+    unsupported_terms = (
+        "error budget",
+        "slo",
+        "sla",
+        "incident response",
+        "production support",
+        "service availability",
+    )
+    return any(term in normalized_text for term in unsupported_terms)
+
+
 def _is_placeholder_cover_letter_paragraph(text: str) -> bool:
     normalized = text.lower()
     placeholder_phrases = (
@@ -421,6 +466,42 @@ def _is_placeholder_cover_letter_paragraph(text: str) -> bool:
         "using only master resume facts",
     )
     return any(phrase in normalized for phrase in placeholder_phrases)
+
+
+def _cover_letter_theme(relevant_terms: list[str]) -> str:
+    for term in relevant_terms:
+        if term in {"devsecops", "devops", "security", "application security"}:
+            return "secure DevSecOps practices"
+        if term in {"sre", "reliability", "site reliability engineer"}:
+            return "SRE and reliability engineering"
+        if term in {"kubernetes", "platform engineering", "cloud engineering"}:
+            return "cloud platform engineering"
+        if term in {"vault", "pki", "identity"}:
+            return "identity and secrets management"
+    return "secure platform engineering"
+
+
+def _cover_letter_tooling_context(resume_text: str) -> str:
+    normalized = resume_text.lower()
+    terms = [
+        ("HashiCorp Vault", "vault"),
+        ("PKI", "pki"),
+        ("Kubernetes", "kubernetes"),
+        ("Terraform", "terraform"),
+        ("GitOps", "gitops"),
+        ("CI/CD", "ci/cd"),
+        ("SAST/DAST/SCA", "sast"),
+        ("Azure", "azure"),
+        ("AWS", "aws"),
+    ]
+    present = [label for label, needle in terms if needle in normalized]
+    if not present:
+        return "automation, security controls, and production engineering practices"
+    return _human_join(present[:5])
+
+
+def _word_count(text: str) -> int:
+    return len(text.split())
 
 
 def _extract_candidate_name(resume_text: str) -> str:

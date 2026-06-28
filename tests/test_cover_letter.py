@@ -362,6 +362,110 @@ def test_ai_cover_letter_rejects_schema_placeholder_paragraphs(tmp_path, monkeyp
     assert output.count("Sincerely,") == 1
 
 
+def test_ai_cover_letter_has_three_clean_body_paragraphs(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path, sender="Jane Recruiter <jane.recruiter@example.com>")
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(
+        "Sridath Jeelugula\n"
+        "DevSecOps, Kubernetes, Terraform, Vault, PKI, SRE, and CI/CD experience.",
+        encoding="utf-8",
+    )
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        return """{
+  "paragraphs": [
+    "Devsecops | Cloud Identity experience: My passion and vision align perfectly with this role.",
+    "Key Responsibilities: I have honed my skills and developed a strong set of skills.",
+    "Skills & Tools: Kubernetes, Vault, and Terraform."
+  ]
+}"""
+
+    monkeypatch.setattr(cover_letter_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = generate_ai_cover_letter_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "letters",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    paragraphs = _body_paragraphs(output)
+    assert len(paragraphs) == 3
+    assert all(len(paragraph.split()) <= 120 for paragraph in paragraphs)
+    lowered = output.lower()
+    for banned in (
+        "passion",
+        "honed my skills",
+        "vision",
+        "align perfectly",
+        "strong set of skills",
+        "devsecops | cloud identity experience:",
+        "key responsibilities:",
+        "skills & tools:",
+    ):
+        assert banned not in lowered
+    assert output.count("Dear ") == 1
+    assert output.count("Sincerely,") == 1
+
+
+def test_ai_cover_letter_rejects_unsupported_intact_reliability_claim(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path, sender="Jane Recruiter <jane.recruiter@example.com>")
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(
+        "Sridath Jeelugula\n"
+        "Intact Financial Corporation: DevSecOps security controls and application security.\n"
+        "Morgan Stanley: SLO/SLA management, error budgets, incident response, and production support.",
+        encoding="utf-8",
+    )
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        return """{
+  "paragraphs": [
+    "I am writing to express my interest in the Platform Security Engineer opportunity at ExampleCo.",
+    "At Intact Financial Corporation, I managed error budgets, SLO/SLA management, incident response, and production support.",
+    "I would bring practical engineering judgment and security-aware delivery habits to the team."
+  ]
+}"""
+
+    monkeypatch.setattr(cover_letter_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = generate_ai_cover_letter_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "letters",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert "At Intact Financial Corporation, I managed error budgets" not in output
+    assert len(_body_paragraphs(output)) == 3
+    assert output.count("Dear ") == 1
+    assert output.count("Sincerely,") == 1
+
+
 def test_ai_cover_letter_removes_linkedin_greeting_bad_phrases_and_duplicate_signatures(
     tmp_path,
     monkeypatch,
@@ -567,6 +671,13 @@ def _assert_recruiter_ready(output: str) -> None:
     assert "## missing information warnings" not in lowered
     assert "## truthfulness notes" not in lowered
     assert "keyword analysis" not in lowered
+
+
+def _body_paragraphs(output: str) -> list[str]:
+    lines = output.strip().splitlines()
+    assert lines[0].startswith("Dear ")
+    body = output.split("\n\n", maxsplit=1)[1].rsplit("\n\nSincerely,\n\n", maxsplit=1)[0]
+    return [paragraph.strip() for paragraph in body.split("\n\n") if paragraph.strip()]
 
 
 def _word_count(output: str) -> int:
