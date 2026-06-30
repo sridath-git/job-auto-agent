@@ -1,0 +1,90 @@
+{
+  "personal_info": {
+    "first_name": "Sridath",
+    "last_name": "Jeelugula",
+    "email": "sridath@example.com",
+    "phone": "+1 555 123 4567",
+    "address": "123 Example Street",
+    "city": "Montreal",
+    "province_state": "QC",
+    "country": "Canada",
+    "postal_code": "H1H 1H1",
+    "linkedin_url": "https://www.linkedin.com/in/example",
+    "github_url": "https://github.com/example",
+    "portfolio_url": "https://example.com"
+  },
+  "work_authorization": {
+    "work_authorization": "Authorized to work in Canada",
+    "sponsorship_required": false,
+    "legally_authorized_to_work": true,
+    "willing_to_relocate": false,
+    "remote_preference": "Remote or hybrid",
+    "notice_period": "2 weeks",
+    "salary_expectation": "Prefer to discuss"
+  },
+  "education": {
+    "degree": "Master of Engineering (Quality Systems Engineering)",
+    "school": "Concordia University",
+    "location": "Montreal, QC",
+    "graduation_year": "2019"
+  },
+  "work_experience": [
+    {
+      "company": "Example Company",
+      "title": "Site Reliability Engineer",
+      "location": "Montreal, QC",
+      "start_date": "2024-01",
+      "end_date": "",
+      "is_current": true,
+      "responsibilities": [
+        "Operated Kubernetes platforms and supported reliability improvements.",
+        "Built secure CI/CD automation and infrastructure as code."
+      ]
+    }
+  ],
+  "skills": {
+    "technical_skills": [
+      "Python",
+      "Bash",
+      "Linux"
+    ],
+    "cloud_skills": [
+      "Azure",
+      "AWS",
+      "Kubernetes"
+    ],
+    "security_skills": [
+      "PKI",
+      "Vault",
+      "SAST",
+      "DAST",
+      "SCA"
+    ],
+    "devops_skills": [
+      "Terraform",
+      "Jenkins",
+      "GitHub Actions",
+      "GitOps"
+    ]
+  },
+  "screening_answers": [
+    {
+      "question": "Are you legally authorized to work in Canada?",
+      "answer": "Yes",
+      "confidence": 1.0,
+      "allow_auto_fill": true
+    },
+    {
+      "question": "Do you require sponsorship?",
+      "answer": "No",
+      "confidence": 1.0,
+      "allow_auto_fill": true
+    },
+    {
+      "question": "What is your expected salary?",
+      "answer": "Prefer to discuss",
+      "confidence": 0.6,
+      "allow_auto_fill": false
+    }
+  ]
+}

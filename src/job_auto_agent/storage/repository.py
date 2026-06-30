@@ -11,6 +11,8 @@ JOB_STATUSES = (
     "New",
     "Interested",
     "Ready to Apply",
+    "Application Started",
+    "Needs Review",
     "Applied",
     "Not Interested",
     "Interview",

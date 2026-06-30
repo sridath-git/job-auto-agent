@@ -11,6 +11,12 @@ from job_auto_agent.config import (
     is_openai_cloud_base_url,
     resolve_openai_api_key,
 )
+from job_auto_agent.application.profile import (
+    DEFAULT_APPLICATION_PROFILE_PATH,
+    ApplicationProfileError,
+    load_application_profile,
+    validate_application_profile,
+)
 from job_auto_agent.gmail.auth import SCOPES
 
 
@@ -29,6 +35,7 @@ def validate_setup(settings: Settings) -> list[ValidationCheck]:
         _check_ai_provider(settings),
         _check_credentials_file(settings.gmail_credentials_file),
         _check_token_file(settings.gmail_token_file),
+        _check_application_profile(DEFAULT_APPLICATION_PROFILE_PATH),
     ]
     return checks
 
@@ -173,3 +180,18 @@ def _check_token_file(token_file: Path) -> ValidationCheck:
         )
 
     return ValidationCheck("Gmail token", True, f"Existing token at {token_file} has Gmail scope.")
+
+
+def _check_application_profile(profile_path: Path) -> ValidationCheck:
+    try:
+        profile = load_application_profile(profile_path)
+    except ApplicationProfileError as exc:
+        return ValidationCheck(
+            "Application profile",
+            True,
+            f"Warning: {exc}",
+        )
+    warnings = validate_application_profile(profile)
+    if warnings:
+        return ValidationCheck("Application profile", True, "Warning: " + " ".join(warnings))
+    return ValidationCheck("Application profile", True, f"Found application profile at {profile_path}.")
