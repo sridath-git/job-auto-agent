@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -181,8 +182,12 @@ def _run_playwright_assist(job: sqlite3.Row, profile: ApplicationProfile, paths:
             page.goto(job["url"], wait_until="domcontentloaded")
             fill_application_page(page, profile, paths)
             _warn_if_final_buttons_present(page)
-            print("Review the application manually before submitting.")
-            page.pause()
+            print("Review the application manually before submitting.", flush=True)
+            review_wait_seconds = _review_wait_seconds()
+            if review_wait_seconds is None:
+                page.pause()
+            else:
+                page.wait_for_timeout(review_wait_seconds * 1000)
             browser.close()
     except PlaywrightError as exc:
         raise AssistApplyError(
@@ -321,3 +326,12 @@ def _bool_text(value: Any) -> str | None:
         return "Yes" if value else "No"
     return str(value)
 
+
+def _review_wait_seconds() -> int | None:
+    raw_value = os.getenv("JOB_AUTO_AGENT_ASSIST_REVIEW_SECONDS")
+    if raw_value is None:
+        return None
+    try:
+        return max(0, int(raw_value))
+    except ValueError:
+        return None
