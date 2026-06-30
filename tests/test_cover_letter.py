@@ -9,6 +9,7 @@ from job_auto_agent.cover_letter.generator import (
     generate_ai_cover_letter_for_job,
     generate_cover_letter_for_job,
 )
+from job_auto_agent.extraction.pipeline import normalize_company_name
 from job_auto_agent.models import EmailMessage, JobOpportunity
 from job_auto_agent.resume.tailor import (
     AITailoringDisabledError,
@@ -267,6 +268,114 @@ Sridath Jeelugula
     assert "Sridath Jeelugula" in signature
     assert "Jane Recruiter" not in signature
     assert "jane.recruiter@example.com" not in signature
+
+
+@pytest.mark.parametrize(
+    ("sender", "expected_greeting"),
+    [
+        ("LinkedIn Job Alerts <jobs-noreply@linkedin.com>", "Dear Hiring Manager,"),
+        ("Indeed Notifications <notifications@indeed.com>", "Dear Hiring Manager,"),
+        ("John Smith <john.smith@exampleco.com>", "Dear John Smith,"),
+        ("no-reply <no-reply@exampleco.com>", "Dear Hiring Manager,"),
+    ],
+)
+def test_ai_cover_letter_selects_safe_greeting(
+    tmp_path,
+    monkeypatch,
+    sender: str,
+    expected_greeting: str,
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path, sender=sender)
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(
+        "Sridath Jeelugula\nKubernetes and Terraform experience.",
+        encoding="utf-8",
+    )
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        return """{
+  "paragraphs": [
+    "I am writing to express my interest in the Platform Security Engineer opportunity at ExampleCo.",
+    "My Kubernetes and Terraform work is relevant to secure platform delivery.",
+    "I would bring practical engineering judgment to the team."
+  ]
+}"""
+
+    monkeypatch.setattr(cover_letter_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = generate_ai_cover_letter_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "letters",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert output.startswith(expected_greeting)
+    assert "LinkedIn Job Alerts" not in output
+    assert "Indeed Notifications" not in output
+
+
+def test_ai_cover_letter_normalizes_company_in_fallback_intro_and_closing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(
+        db_path,
+        sender="LinkedIn Job Alerts <jobs-noreply@linkedin.com>",
+        company="XP Venture Labs Posted on 6 days ago",
+    )
+    resume_path = tmp_path / "master_resume.md"
+    resume_path.write_text(
+        "Sridath Jeelugula\nKubernetes, Terraform, Vault, PKI, and DevSecOps experience.",
+        encoding="utf-8",
+    )
+    settings = _settings(tmp_path, ai_tailoring_enabled=True, openai_api_key="test-key")
+
+    def fake_provider(
+        api_key: str,
+        base_url: str,
+        model: str,
+        prompt: str,
+        timeout_seconds: int = 60,
+    ) -> str:
+        assert "XP Venture Labs Posted on 6" not in prompt
+        assert "XP Venture Labs" in prompt
+        return "not json"
+
+    monkeypatch.setattr(cover_letter_module, "_call_openai_compatible_provider", fake_provider)
+
+    with connect(db_path) as conn:
+        result = generate_ai_cover_letter_for_job(
+            conn,
+            job_id,
+            settings,
+            master_resume_path=resume_path,
+            output_dir=tmp_path / "letters",
+        )
+
+    output = result.output_path.read_text(encoding="utf-8")
+    assert output.startswith("Dear Hiring Manager,")
+    assert "XP Venture Labs Posted on 6" not in output
+    assert "XP Venture Labs" in output
+    assert "support the engineering team at XP Venture Labs." in output
+
+
+def test_company_normalization_strips_linkedin_suffixes() -> None:
+    assert normalize_company_name("XP Venture Labs Posted on 6 days ago") == "XP Venture Labs"
 
 
 def test_ai_cover_letter_uses_structured_paragraphs_with_app_owned_envelope(tmp_path, monkeypatch) -> None:
@@ -611,7 +720,11 @@ def test_cover_letter_excludes_contact_details_and_internal_sections(tmp_path) -
     assert "Cognizant" in output
 
 
-def _seed_job(db_path, sender: str = "Recruiter <jobs@example.com>") -> int:
+def _seed_job(
+    db_path,
+    sender: str = "Recruiter <jobs@example.com>",
+    company: str = "ExampleCo",
+) -> int:
     now = datetime.now(timezone.utc)
     with connect(db_path) as conn:
         message = EmailMessage(
@@ -628,7 +741,7 @@ def _seed_job(db_path, sender: str = "Recruiter <jobs@example.com>") -> int:
             conn,
             JobOpportunity(
                 source_message_id=message.gmail_id,
-                company="ExampleCo",
+                company=company,
                 title="Platform Security Engineer",
                 location="Remote",
                 url="https://example.com/jobs/platform-security",
