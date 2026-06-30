@@ -20,6 +20,7 @@ data/*.sqlite3
 data/*.sqlite-*
 data/*.sqlite3-*
 data/profile/master_resume.md
+data/profile/application_profile.json
 data/generated_resumes/
 data/generated_cover_letters/
 data/generated_applications/

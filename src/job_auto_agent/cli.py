@@ -6,6 +6,11 @@ from job_auto_agent.application.workflow import (
     ApplicationPackageError,
     prepare_application_package,
 )
+from job_auto_agent.application.assist import AssistApplyError, assist_apply_for_job
+from job_auto_agent.application.profile import (
+    ApplicationProfileError,
+    init_application_profile,
+)
 from job_auto_agent.config import get_settings
 from job_auto_agent.cover_letter.generator import (
     CoverLetterGenerationError,
@@ -33,6 +38,10 @@ def main() -> None:
 
     subparsers.add_parser("score-jobs", help="Score stored job opportunities.")
     subparsers.add_parser("validate-setup", help="Validate local config before Gmail sync.")
+    subparsers.add_parser(
+        "init-application-profile",
+        help="Create data/profile/application_profile.json from the example template.",
+    )
 
     tailor_parser = subparsers.add_parser(
         "tailor-resume",
@@ -77,6 +86,12 @@ def main() -> None:
         help="Replace an existing generated application package for this job.",
     )
 
+    assist_parser = subparsers.add_parser(
+        "assist-apply",
+        help="Open a headed browser and assist with filling an application form.",
+    )
+    assist_parser.add_argument("--job-id", type=int, required=True)
+
     args = parser.parse_args()
     settings = get_settings()
 
@@ -116,6 +131,15 @@ def main() -> None:
         failures = [check for check in checks if not check.ok]
         if failures:
             raise SystemExit(1)
+        return
+
+    if args.command == "init-application-profile":
+        try:
+            profile_path = init_application_profile()
+        except ApplicationProfileError as exc:
+            print(f"Unable to initialize application profile: {exc}")
+            raise SystemExit(1) from exc
+        print(f"Application profile ready at {profile_path}")
         return
 
     if args.command == "tailor-resume":
@@ -187,3 +211,15 @@ def main() -> None:
             print("Warnings:")
             for warning in result.warnings:
                 print(f"- {warning}")
+        return
+
+    if args.command == "assist-apply":
+        init_db(settings.sqlite_path)
+        with connect(settings.sqlite_path) as conn:
+            try:
+                result = assist_apply_for_job(conn, args.job_id)
+            except (AssistApplyError, ApplicationProfileError) as exc:
+                print(f"Unable to assist application: {exc}")
+                raise SystemExit(1) from exc
+        print(f"ATS detected: {result.ats_type}")
+        print(result.message)

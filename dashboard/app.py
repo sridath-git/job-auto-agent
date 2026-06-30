@@ -14,6 +14,11 @@ from job_auto_agent.application.workflow import (
     detect_application_files,
     prepare_application_package,
 )
+from job_auto_agent.application.assist import AssistApplyError, assist_apply_for_job
+from job_auto_agent.application.profile import (
+    DEFAULT_APPLICATION_PROFILE_PATH,
+    ApplicationProfileError,
+)
 from job_auto_agent.config import get_settings
 from job_auto_agent.cover_letter.generator import (
     CoverLetterGenerationError,
@@ -268,6 +273,20 @@ for job in filtered:
                 _safe_open_folder(app_paths.folder)
             else:
                 st.info("Prepare application first")
+
+        if package_cols[2].button("Assist Apply", key=f"assist-apply-{job['id']}"):
+            if not app_files.resume_docx or not app_files.cover_letter_docx:
+                st.warning("Prepare Application first.")
+            elif not DEFAULT_APPLICATION_PROFILE_PATH.exists():
+                st.warning("Create application_profile.json first.")
+            else:
+                try:
+                    with connect(settings.sqlite_path) as conn:
+                        result = assist_apply_for_job(conn, job["id"])
+                    st.success(result.message)
+                    st.info(f"Detected ATS: {result.ats_type}")
+                except (AssistApplyError, ApplicationProfileError) as exc:
+                    st.error(str(exc))
 
         status_button_cols = st.columns(4)
         status_buttons = (

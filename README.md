@@ -33,6 +33,7 @@ If your machine has a newer Python, such as `python3.13`, use that instead.
 ```bash
 python -m pip install --upgrade pip
 pip install -e ".[dev]"
+playwright install chromium
 ```
 
 3. Create environment config.
@@ -177,6 +178,8 @@ job-auto-agent tailor-resume --job-id 123 --ai
 job-auto-agent generate-cover-letter --job-id 123
 job-auto-agent generate-cover-letter --job-id 123 --ai
 job-auto-agent prepare-application --job-id 123 --ai --overwrite
+job-auto-agent init-application-profile
+job-auto-agent assist-apply --job-id 123
 ```
 
 ## Manual Resume Tailoring
@@ -432,6 +435,70 @@ In the dashboard, each job card includes:
 - **Download Cover Letter PDF** when available
 - Status buttons for `Interested`, `Ready to Apply`, `Applied`, and `Not Interested`
 
+## Browser-Assisted Apply
+
+Browser-assisted apply helps fill job application forms in a headed browser using:
+
+- `data/profile/application_profile.json`
+- `data/generated_applications/job_<id>/resume.docx`
+- `data/generated_applications/job_<id>/cover_letter.docx`
+- The saved job URL from SQLite
+
+It is not full auto-submit. The app never clicks the final Submit/Apply button. It stops for manual review and prints:
+
+```text
+Review the application manually before submitting.
+```
+
+Create the local application profile template:
+
+```bash
+job-auto-agent init-application-profile
+```
+
+Then edit:
+
+```text
+data/profile/application_profile.json
+```
+
+The real profile file is ignored by Git. It supports personal information, work authorization, education, work experience, skill groups, and screening answers. Screening answers are filled only when `allow_auto_fill=true` and confidence is high enough.
+
+Before using assisted apply, prepare the application package:
+
+```bash
+job-auto-agent prepare-application --job-id 123 --ai --overwrite
+```
+
+Then start the browser-assisted flow:
+
+```bash
+job-auto-agent assist-apply --job-id 123
+```
+
+Supported detection:
+
+- Workday
+- Greenhouse
+- Lever
+- LinkedIn Easy Apply when feasible
+- Generic ATS fallback
+
+Safety and limitations:
+
+- The browser runs in headed Playwright mode so you can watch and review.
+- If Chromium is missing, run `playwright install chromium`.
+- The app fills common personal, education, work experience, upload, and screening fields when it can detect them.
+- It leaves fields blank when unsure.
+- It never bypasses CAPTCHA.
+- It never answers EEOC, diversity, disability, or voluntary self-identification questions unless you explicitly add a matching allowed screening answer.
+- It never fabricates work authorization, sponsorship, education, certifications, location, or experience.
+- Some ATS pages may block automation or use custom widgets; complete those manually.
+
+The workflow marks the job `Application Started` when the browser opens and `Needs Review` after the assisted fill step completes. After you manually submit the application, use the dashboard to mark the job `Applied`.
+
+In the dashboard, each job card includes **Assist Apply**. If the package is missing, it shows **Prepare Application first**. If the profile is missing, it shows **Create application_profile.json first**.
+
 ## Project Structure
 
 ```text
@@ -440,7 +507,7 @@ data/profile/               Local profile examples and ignored real master resum
 data/generated_cover_letters/ Ignored local generated cover letters
 data/generated_applications/ Ignored local application packages
 src/job_auto_agent/
-  application/              Application package workflow and DOCX/PDF export
+  application/              Application package workflow, DOCX/PDF export, and assisted apply
   cli.py                    Command-line entrypoint
   config.py                 Environment-driven settings
   cover_letter/             Manual cover letter generation

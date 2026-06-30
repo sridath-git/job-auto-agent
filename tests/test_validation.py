@@ -48,6 +48,37 @@ def test_validate_setup_fails_without_credentials(tmp_path) -> None:
     assert any(check.name == "Gmail credentials" and not check.ok for check in checks)
 
 
+def test_validate_setup_warns_when_application_profile_missing(tmp_path, monkeypatch) -> None:
+    credentials_file = tmp_path / "credentials.json"
+    credentials_file.write_text(
+        json.dumps(
+            {
+                "installed": {
+                    "client_id": "client-id",
+                    "client_secret": "client-secret",
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(
+        gmail_credentials_file=credentials_file,
+        gmail_token_file=tmp_path / "token.json",
+        database_url=f"sqlite:///{tmp_path / 'job_auto_agent.db'}",
+        gmail_query="newer_than:30d",
+        match_min_score=35,
+    )
+    monkeypatch.chdir(tmp_path)
+
+    checks = validate_setup(settings)
+    profile_check = next(check for check in checks if check.name == "Application profile")
+
+    assert profile_check.ok
+    assert "Warning:" in profile_check.message
+
+
 def test_validate_setup_rejects_web_oauth_client(tmp_path) -> None:
     credentials_file = tmp_path / "credentials.json"
     credentials_file.write_text(
