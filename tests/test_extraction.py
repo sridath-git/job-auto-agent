@@ -22,3 +22,23 @@ def test_extracts_security_job_from_email() -> None:
     assert job.company == "Examplecorp"
     assert job.location == "Remote"
     assert job.url == "https://example.com/job"
+
+
+def test_extracts_company_without_linkedin_job_alert_suffix() -> None:
+    message = EmailMessage(
+        gmail_id="abc124",
+        thread_id="thread124",
+        sender="LinkedIn Job Alerts <jobs-noreply@linkedin.com>",
+        subject="DevSecOps Engineer role",
+        snippet="XP Venture Labs Posted on 6 days ago Easy Apply",
+        body_text=(
+            "We are hiring a DevSecOps Engineer at XP Venture Labs Posted on 6 days ago "
+            "Easy Apply https://example.com/job"
+        ),
+        received_at=datetime.now(timezone.utc),
+    )
+
+    job = extract_job(message)
+
+    assert job is not None
+    assert job.company == "XP Venture Labs"

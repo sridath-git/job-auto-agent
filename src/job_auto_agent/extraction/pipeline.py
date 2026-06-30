@@ -69,12 +69,30 @@ def _extract_company(sender: str, text: str) -> str | None:
     if sender_match:
         domain = sender_match.group(1).split(".")[0]
         if domain not in {"gmail", "linkedin", "indeed", "greenhouse", "lever"}:
-            return domain.replace("-", " ").title()
+            return normalize_company_name(domain.replace("-", " ").title())
 
     company_match = re.search(r"\bat\s+([A-Z][A-Za-z0-9&.\- ]{2,50})", text)
     if company_match:
-        return company_match.group(1).strip()
+        return normalize_company_name(company_match.group(1))
     return None
+
+
+def normalize_company_name(company: str | None) -> str | None:
+    if not company:
+        return None
+    cleaned = re.sub(r"\s+", " ", company).strip(" -–—|,")
+    cleanup_patterns = (
+        r"\bPosted\s+on\b.*$",
+        r"\b\d+\s+(?:days?|hours?|minutes?)\s+ago\b.*$",
+        r"\b\d+\s+applicants?\b.*$",
+        r"\bEasy\s+Apply\b.*$",
+        r"\bApply\b.*$",
+        r"\bViewed\b.*$",
+        r"\bPromoted\b.*$",
+    )
+    for pattern in cleanup_patterns:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip(" -–—|,")
+    return cleaned or None
 
 
 def _extract_location(text: str) -> str | None:

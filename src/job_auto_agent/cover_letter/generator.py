@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from job_auto_agent.config import Settings, resolve_openai_api_key
+from job_auto_agent.extraction.pipeline import normalize_company_name
 from job_auto_agent.resume.tailor import (
     AITailoringDisabledError,
     DEFAULT_MASTER_RESUME_PATH,
@@ -177,6 +178,10 @@ def _build_warnings(
     return warnings
 
 
+def _job_company(job: sqlite3.Row) -> str:
+    return normalize_company_name(job["company"]) or "your team"
+
+
 def _render_rule_based_cover_letter(
     job: sqlite3.Row,
     resume_text: str,
@@ -184,7 +189,7 @@ def _render_rule_based_cover_letter(
     missing_keywords: list[str],
     warnings: list[str],
 ) -> str:
-    company = job["company"] or "your team"
+    company = _job_company(job)
     relevant_terms = _select_relevant_terms(matched_keywords)
     relevant_phrase = _human_join(relevant_terms) if relevant_terms else "relevant engineering experience"
     highlights = _select_resume_highlights(resume_text, matched_keywords, limit=3)
@@ -224,6 +229,7 @@ def _build_ai_cover_letter_prompt(
     missing_section = "\n".join(f"- {term}" for term in missing_keywords) or "- None"
     resume_context = _build_cover_letter_resume_context(resume_text, matched_keywords)
     job_description = _truncate_prompt_text(job["description"], 1600)
+    company = _job_company(job)
     return f"""Generate three professional recruiter-ready cover letter body paragraphs.
 
 Hard safety rules:
@@ -240,7 +246,7 @@ Hard safety rules:
 - Applicant/candidate name is: {candidate_name}.
 - Recruiter identity must never be used as applicant name, applicant signature, applicant email, or applicant contact info.
 - If recruiter name is known, greet them as: Dear {recruiter_name or "Hiring Manager"},
-- Use neutral source wording: I am writing to express my interest in the {job["title"]} opportunity at {job["company"] or "your team"}.
+- Use neutral source wording: I am writing to express my interest in the {job["title"]} opportunity at {company}.
 - Do not say the role was advertised on LinkedIn unless the source is explicitly configured as LinkedIn.
 - Do not use generic phrases like "align perfectly", "aligns perfectly", or "honed a strong set of skills".
 - Do not write the greeting.
@@ -267,7 +273,7 @@ Required JSON schema:
 
 Target job:
 - Title: {job["title"]}
-- Company: {job["company"] or "Unknown"}
+- Company: {company}
 - Location: {job["location"] or "Unknown"}
 - URL: {job["url"] or "Not available"}
 - Recruiter name: {recruiter_name or "Unknown"}
@@ -296,8 +302,9 @@ def _prepare_ai_cover_letter_output(
     candidate_name = _extract_candidate_name(resume_text or "")
     sanitized = _sanitize_cover_letter_text(_remove_internal_sections(_strip_code_fences(draft)))
     sanitized = _ensure_cover_letter_greeting(sanitized, recruiter_name)
-    if role and company:
-        sanitized = _ensure_neutral_opening(sanitized, role, company)
+    normalized_company = normalize_company_name(company) or "the engineering team"
+    if role and normalized_company:
+        sanitized = _ensure_neutral_opening(sanitized, role, normalized_company)
     sanitized = _ensure_candidate_signature(sanitized, candidate_name)
     return sanitized
 
@@ -345,7 +352,7 @@ def _fallback_ai_cover_letter_paragraphs(
     resume_text: str,
     matched_keywords: list[str],
 ) -> list[str]:
-    company = job["company"] or "your team"
+    company = _job_company(job)
     title = _cover_letter_role_title(job["title"])
     relevant_terms = _select_relevant_terms(matched_keywords)
     strongest_theme = _cover_letter_theme(relevant_terms)
@@ -359,7 +366,7 @@ def _fallback_ai_cover_letter_paragraphs(
         f"The most relevant thread is hands-on work with {tooling_context}, turning identity, automation, "
         "and platform controls into repeatable delivery practices.",
         f"I would bring practical engineering judgment, clear ownership, and security-aware delivery habits to {company}. "
-        "I would welcome a conversation about how I can support the team.",
+        f"I would welcome a conversation about how I can support {_engineering_team_target(company)}.",
     ]
 
 
@@ -526,10 +533,45 @@ def _extract_recruiter_name(sender: str | None) -> str | None:
     name = re.sub(r"\s+via\s+LinkedIn\b", "", name, flags=re.IGNORECASE).strip()
     if not name or "@" in name:
         return None
-    blocked_words = {"recruiter", "jobs", "careers", "talent", "hiring", "team"}
-    if name.lower() in blocked_words:
+    normalized = re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
+    blocked_names = {
+        "linkedin job alerts",
+        "linkedin",
+        "indeed",
+        "greenhouse",
+        "lever",
+        "workday",
+        "recruiter",
+        "jobs",
+        "careers",
+        "talent",
+        "hiring",
+        "team",
+    }
+    blocked_fragments = ("no reply", "noreply", "notifications", "notification")
+    if normalized in blocked_names or any(fragment in normalized for fragment in blocked_fragments):
+        return None
+    if not _looks_like_person_name(name):
         return None
     return name
+
+
+def _looks_like_person_name(name: str) -> bool:
+    parts = [part for part in re.split(r"\s+", name.strip()) if part]
+    if len(parts) < 2 or len(parts) > 4:
+        return False
+    blocked_tokens = {"job", "jobs", "alert", "alerts", "team", "careers", "recruiting"}
+    for part in parts:
+        normalized = re.sub(r"[^a-z]", "", part.lower())
+        if not normalized or normalized in blocked_tokens:
+            return False
+    return True
+
+
+def _engineering_team_target(company: str) -> str:
+    if company == "your team":
+        return "the engineering team"
+    return f"the engineering team at {company}"
 
 
 def _ensure_cover_letter_greeting(text: str, recruiter_name: str | None) -> str:
