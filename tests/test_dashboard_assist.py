@@ -9,6 +9,7 @@ from job_auto_agent.application.assist import (
 from job_auto_agent.application.dashboard import (
     assist_apply_error_message,
     assist_apply_readiness,
+    dashboard_review_wait_seconds,
     is_valid_application_url,
 )
 from job_auto_agent.application.profile import ApplicationProfileMissingError
@@ -64,3 +65,17 @@ def test_dashboard_rejects_invalid_application_urls() -> None:
     assert not is_valid_application_url(None)
     assert not is_valid_application_url("not-a-url")
     assert not is_valid_application_url("file:///tmp/application.html")
+
+
+def test_dashboard_review_wait_defaults_to_five_minutes(monkeypatch) -> None:
+    monkeypatch.delenv("JOB_AUTO_AGENT_ASSIST_REVIEW_SECONDS", raising=False)
+
+    assert dashboard_review_wait_seconds() == 300
+
+
+def test_dashboard_review_wait_uses_configured_value(monkeypatch) -> None:
+    monkeypatch.setenv("JOB_AUTO_AGENT_ASSIST_REVIEW_SECONDS", "420")
+    assert dashboard_review_wait_seconds() == 420
+
+    monkeypatch.setenv("JOB_AUTO_AGENT_ASSIST_REVIEW_SECONDS", "invalid")
+    assert dashboard_review_wait_seconds() == 300
