@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -71,3 +72,11 @@ def is_valid_application_url(url: str | None) -> bool:
         return False
     parsed = urlparse(url)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def dashboard_review_wait_seconds() -> int:
+    raw_value = os.getenv("JOB_AUTO_AGENT_ASSIST_REVIEW_SECONDS", "300")
+    try:
+        return max(0, int(raw_value))
+    except ValueError:
+        return 300

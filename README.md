@@ -165,6 +165,8 @@ Environment variables are documented in `.env.example`.
 - `DATABASE_URL`: SQLite database URL. Defaults to `sqlite:///data/job_auto_agent.db`.
 - `GMAIL_QUERY`: Gmail search query used during sync.
 - `MATCH_MIN_SCORE`: Minimum score shown as a strong match in the dashboard.
+- `JOB_AUTO_AGENT_ASSIST_REVIEW_SECONDS`: How long the dashboard keeps the headed
+  assisted-apply browser open for manual review. Defaults to 300 seconds.
 
 ## Commands
 
@@ -487,6 +489,10 @@ Supported detection:
 Safety and limitations:
 
 - The browser runs in headed Playwright mode so you can watch and review.
+- Dashboard launches keep the browser open for 300 seconds by default. Set
+  `JOB_AUTO_AGENT_ASSIST_REVIEW_SECONDS` to change the review window.
+- LinkedIn login remains manual. If prompted, sign in directly in the headed browser;
+  the app does not save LinkedIn tokens, cookies, or browser storage.
 - If Chromium is missing, run `playwright install chromium`.
 - The app fills common personal, education, work experience, upload, and screening fields when it can detect them.
 - It leaves fields blank when unsure.

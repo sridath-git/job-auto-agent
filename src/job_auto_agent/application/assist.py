@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -57,6 +58,7 @@ def assist_apply_for_job(
     profile_path: Path = DEFAULT_APPLICATION_PROFILE_PATH,
     output_root: Path = DEFAULT_APPLICATION_OUTPUT_DIR,
     browser_driver: BrowserDriver | None = None,
+    review_wait_seconds: int | None = None,
 ) -> AssistApplyResult:
     job = _get_job(conn, job_id)
     if job is None:
@@ -76,8 +78,15 @@ def assist_apply_for_job(
     update_job_status(conn, job_id, "Application Started")
     conn.commit()
 
-    driver = browser_driver or _run_playwright_assist
-    ats_type = driver(job, profile, paths)
+    if browser_driver is None:
+        ats_type = _run_playwright_assist(
+            job,
+            profile,
+            paths,
+            review_wait_seconds=review_wait_seconds,
+        )
+    else:
+        ats_type = browser_driver(job, profile, paths)
 
     update_job_status(conn, job_id, "Needs Review")
     conn.commit()
@@ -165,7 +174,12 @@ def fill_application_page(page: Any, profile: ApplicationProfile, paths: Applica
     _upload_documents(page, paths)
 
 
-def _run_playwright_assist(job: sqlite3.Row, profile: ApplicationProfile, paths: ApplicationPaths) -> str:
+def _run_playwright_assist(
+    job: sqlite3.Row,
+    profile: ApplicationProfile,
+    paths: ApplicationPaths,
+    review_wait_seconds: int | None = None,
+) -> str:
     try:
         from playwright.sync_api import Error as PlaywrightError
         from playwright.sync_api import sync_playwright
@@ -178,16 +192,40 @@ def _run_playwright_assist(job: sqlite3.Row, profile: ApplicationProfile, paths:
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=False)
-            page = browser.new_page()
+            context = browser.new_context()
+            page = context.new_page()
             page.goto(job["url"], wait_until="domcontentloaded")
-            fill_application_page(page, profile, paths)
+            wait_seconds = (
+                review_wait_seconds
+                if review_wait_seconds is not None
+                else _review_wait_seconds()
+            )
+            review_deadline = (
+                time.monotonic() + wait_seconds
+                if wait_seconds is not None
+                else None
+            )
+            if ats_type == "LinkedIn Easy Apply" and _linkedin_login_required(page):
+                print("Please login manually and continue in the browser.", flush=True)
+                _wait_for_linkedin_login(page, review_deadline)
+            linkedin_login_pending = (
+                ats_type == "LinkedIn Easy Apply" and _linkedin_login_required(page)
+            )
+            if not linkedin_login_pending:
+                fill_application_page(page, profile, paths)
+            else:
+                print("Please login manually and continue in the browser.", flush=True)
             _warn_if_final_buttons_present(page)
-            print("Review the application manually before submitting.", flush=True)
-            review_wait_seconds = _review_wait_seconds()
-            if review_wait_seconds is None:
+            print(
+                "Browser is open. Review the application manually and submit "
+                "if everything looks correct.",
+                flush=True,
+            )
+            if review_deadline is None:
                 page.pause()
             else:
-                page.wait_for_timeout(review_wait_seconds * 1000)
+                remaining_seconds = max(0, review_deadline - time.monotonic())
+                page.wait_for_timeout(round(remaining_seconds * 1000))
             browser.close()
     except PlaywrightError as exc:
         raise AssistApplyError(
@@ -335,3 +373,25 @@ def _review_wait_seconds() -> int | None:
         return max(0, int(raw_value))
     except ValueError:
         return None
+
+
+def _linkedin_login_required(page: Any) -> bool:
+    try:
+        parsed = urlparse(page.url)
+        login_path = parsed.path.lower()
+        if any(marker in login_path for marker in ("/login", "/checkpoint", "/uas/")):
+            return True
+        return bool(page.locator('input[type="password"]').count())
+    except Exception:
+        return False
+
+
+def _wait_for_linkedin_login(page: Any, review_deadline: float | None) -> None:
+    if review_deadline is None:
+        page.pause()
+        return
+    while _linkedin_login_required(page):
+        remaining_seconds = review_deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            return
+        page.wait_for_timeout(round(min(1.0, remaining_seconds) * 1000))

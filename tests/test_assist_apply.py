@@ -9,6 +9,8 @@ import pytest
 
 from job_auto_agent.application.assist import (
     ApplicationPackageMissingError,
+    _linkedin_login_required,
+    _wait_for_linkedin_login,
     assist_apply_for_job,
     detect_ats_type,
     field_value_for_identifier,
@@ -151,6 +153,73 @@ def test_assist_apply_updates_statuses_and_uses_browser_driver(tmp_path) -> None
     assert result.status == "Needs Review"
     assert result.message == "Review the application manually before submitting."
     assert saved["status"] == "Needs Review"
+
+
+def test_assist_apply_passes_review_wait_to_playwright_driver(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobs.db"
+    init_db(db_path)
+    job_id = _seed_job(db_path)
+    profile_path = _write_profile(tmp_path)
+    output_root = tmp_path / "applications"
+    _write_application_package(job_id, output_root)
+    captured: dict[str, int | None] = {}
+
+    def fake_playwright_driver(job, profile, paths, review_wait_seconds=None):
+        captured["review_wait_seconds"] = review_wait_seconds
+        return "Lever"
+
+    monkeypatch.setattr(
+        "job_auto_agent.application.assist._run_playwright_assist",
+        fake_playwright_driver,
+    )
+
+    with connect(db_path) as conn:
+        result = assist_apply_for_job(
+            conn,
+            job_id,
+            profile_path=profile_path,
+            output_root=output_root,
+            review_wait_seconds=300,
+        )
+
+    assert captured["review_wait_seconds"] == 300
+    assert result.status == "Needs Review"
+
+
+def test_linkedin_login_detection_and_wait_do_not_store_tokens(tmp_path, monkeypatch) -> None:
+    class FakeLocator:
+        def __init__(self, page) -> None:
+            self.page = page
+
+        def count(self) -> int:
+            return int("/login" in self.page.url)
+
+    class FakePage:
+        url = "https://www.linkedin.com/login"
+
+        def __init__(self) -> None:
+            self.waits: list[int] = []
+
+        def locator(self, selector: str) -> FakeLocator:
+            assert selector == 'input[type="password"]'
+            return FakeLocator(self)
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            self.waits.append(milliseconds)
+            self.url = "https://www.linkedin.com/jobs/view/123"
+
+    page = FakePage()
+    monotonic_values = iter((100.0, 100.0))
+    monkeypatch.setattr(
+        "job_auto_agent.application.assist.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    assert _linkedin_login_required(page)
+    _wait_for_linkedin_login(page, review_deadline=101.0)
+
+    assert page.waits == [1000]
+    assert not list(tmp_path.iterdir())
 
 
 def _write_profile(tmp_path: Path) -> Path:

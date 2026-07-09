@@ -17,6 +17,7 @@ from job_auto_agent.application.assist import AssistApplyError, assist_apply_for
 from job_auto_agent.application.dashboard import (
     assist_apply_error_message,
     assist_apply_readiness,
+    dashboard_review_wait_seconds,
     is_valid_application_url,
 )
 from job_auto_agent.application.profile import (
@@ -320,10 +321,24 @@ for job in filtered:
             else:
                 try:
                     with st.status("Application Started", expanded=True) as apply_status:
-                        st.write("Browser opened in headed mode.")
+                        st.write(
+                            "Browser is open. Review the application manually and submit "
+                            "if everything looks correct."
+                        )
+                        st.write(f"Job URL: {job['url']}")
+                        st.write(f"Application folder: `{app_paths.folder.resolve()}`")
                         st.write("Filling fields where possible...")
+                        if "linkedin.com" in job["url"].lower():
+                            st.info(
+                                "If LinkedIn requires authentication, please login manually "
+                                "and continue in the browser."
+                            )
                         with connect(settings.sqlite_path) as conn:
-                            result = assist_apply_for_job(conn, job["id"])
+                            result = assist_apply_for_job(
+                                conn,
+                                job["id"],
+                                review_wait_seconds=dashboard_review_wait_seconds(),
+                            )
                         st.write("Fields filled where possible.")
                         st.write("Stopped before final Submit/Apply.")
                         st.write("Review the application manually before submitting.")
