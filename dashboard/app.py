@@ -8,16 +8,21 @@ from pathlib import Path
 import streamlit as st
 
 from job_auto_agent.application.workflow import (
-    DEFAULT_APPLICATION_OUTPUT_DIR,
     ApplicationPackageError,
     application_paths,
     detect_application_files,
     prepare_application_package,
 )
 from job_auto_agent.application.assist import AssistApplyError, assist_apply_for_job
+from job_auto_agent.application.dashboard import (
+    assist_apply_error_message,
+    assist_apply_readiness,
+    is_valid_application_url,
+)
 from job_auto_agent.application.profile import (
     DEFAULT_APPLICATION_PROFILE_PATH,
     ApplicationProfileError,
+    init_application_profile,
 )
 from job_auto_agent.config import get_settings
 from job_auto_agent.cover_letter.generator import (
@@ -66,6 +71,21 @@ def _safe_open_folder(path: Path) -> None:
         st.info("Automatic folder opening is available only on macOS. Use the path below.")
 
 
+def _safe_open_file(path: Path) -> None:
+    st.code(str(path.resolve()))
+    if not path.exists():
+        st.info("Create the application profile first.")
+        return
+    if platform.system() == "Darwin":
+        try:
+            subprocess.Popen(["open", str(path)])
+            st.success("Opened application profile.")
+        except OSError as exc:
+            st.warning(f"Could not open the application profile automatically: {exc}")
+    else:
+        st.info("Open the profile path above in your preferred editor.")
+
+
 def _missing_keywords_for_job(job_id: int) -> list[str]:
     candidate_paths = [
         DEFAULT_OUTPUT_DIR / f"job_{job_id}_analysis.md",
@@ -101,6 +121,20 @@ init_db(settings.sqlite_path)
 st.set_page_config(page_title="Job Auto Agent", page_icon=":material/security:", layout="wide")
 st.title("Job Auto Agent")
 st.caption("Gmail-sourced DevSecOps, AppSec, and PKI opportunity tracker.")
+
+with st.sidebar.expander("Application Setup", expanded=True):
+    profile_exists = DEFAULT_APPLICATION_PROFILE_PATH.exists()
+    st.write("Application profile: " + ("Ready" if profile_exists else "Missing"))
+    st.code(str(DEFAULT_APPLICATION_PROFILE_PATH.resolve()))
+    profile_cols = st.columns(2)
+    if profile_cols[0].button("Create Application Profile", use_container_width=True):
+        try:
+            profile_path = init_application_profile()
+            st.success(f"Application profile ready: `{profile_path.resolve()}`")
+        except ApplicationProfileError as exc:
+            st.error(str(exc))
+    if profile_cols[1].button("Open Application Profile", use_container_width=True):
+        _safe_open_file(DEFAULT_APPLICATION_PROFILE_PATH)
 
 with connect(settings.sqlite_path) as conn:
     jobs = list_jobs(conn)
@@ -186,6 +220,7 @@ for job in filtered:
         cover_letter_path = DEFAULT_COVER_LETTER_OUTPUT_DIR / f"job_{job['id']}_cover_letter.md"
         app_paths = application_paths(job["id"])
         app_files = detect_application_files(job["id"])
+        apply_readiness = assist_apply_readiness(job["id"])
         status_summary = {
             "generated_resume": resume_path.exists() or app_files.resume_md,
             "generated_cover_letter": cover_letter_path.exists() or app_files.cover_letter_md,
@@ -275,18 +310,28 @@ for job in filtered:
                 st.info("Prepare application first")
 
         if package_cols[2].button("Assist Apply", key=f"assist-apply-{job['id']}"):
-            if not app_files.resume_docx or not app_files.cover_letter_docx:
+            if not is_valid_application_url(job["url"]):
+                st.error("This job does not have a valid application URL.")
+            elif not apply_readiness.profile_exists:
+                st.warning("Create application profile first.")
+                st.code(str(apply_readiness.profile_path.resolve()))
+            elif not apply_readiness.package_exists:
                 st.warning("Prepare Application first.")
-            elif not DEFAULT_APPLICATION_PROFILE_PATH.exists():
-                st.warning("Create application_profile.json first.")
             else:
                 try:
-                    with connect(settings.sqlite_path) as conn:
-                        result = assist_apply_for_job(conn, job["id"])
-                    st.success(result.message)
-                    st.info(f"Detected ATS: {result.ats_type}")
+                    with st.status("Application Started", expanded=True) as apply_status:
+                        st.write("Browser opened in headed mode.")
+                        st.write("Filling fields where possible...")
+                        with connect(settings.sqlite_path) as conn:
+                            result = assist_apply_for_job(conn, job["id"])
+                        st.write("Fields filled where possible.")
+                        st.write("Stopped before final Submit/Apply.")
+                        st.write("Review the application manually before submitting.")
+                        st.caption(f"Detected ATS: {result.ats_type}")
+                        apply_status.update(label="Needs Review", state="complete")
+                    st.success("Review manually before submitting, then use Mark Applied.")
                 except (AssistApplyError, ApplicationProfileError) as exc:
-                    st.error(str(exc))
+                    st.error(assist_apply_error_message(exc))
 
         status_button_cols = st.columns(4)
         status_buttons = (
