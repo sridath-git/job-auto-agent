@@ -491,6 +491,8 @@ Safety and limitations:
 - The browser runs in headed Playwright mode so you can watch and review.
 - Dashboard launches keep the browser open for 300 seconds by default. Set
   `JOB_AUTO_AGENT_ASSIST_REVIEW_SECONDS` to change the review window.
+- Playwright Inspector stays disabled during normal runs. Set `DEBUG=1` or
+  `PWDEBUG=1` only when you explicitly need inspector-based debugging.
 - LinkedIn login remains manual. If prompted, sign in directly in the headed browser;
   the app does not save LinkedIn tokens, cookies, or browser storage.
 - If Chromium is missing, run `playwright install chromium`.
