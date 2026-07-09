@@ -9,8 +9,11 @@ import pytest
 
 from job_auto_agent.application.assist import (
     ApplicationPackageMissingError,
+    _debug_inspector_enabled,
     _linkedin_login_required,
+    _review_wait_seconds,
     _wait_for_linkedin_login,
+    _wait_for_manual_review,
     assist_apply_for_job,
     detect_ats_type,
     field_value_for_identifier,
@@ -220,6 +223,63 @@ def test_linkedin_login_detection_and_wait_do_not_store_tokens(tmp_path, monkeyp
 
     assert page.waits == [1000]
     assert not list(tmp_path.iterdir())
+
+
+def test_normal_review_wait_does_not_open_playwright_inspector(monkeypatch) -> None:
+    class FakePage:
+        def __init__(self) -> None:
+            self.pauses = 0
+            self.waits: list[int] = []
+
+        def pause(self) -> None:
+            self.pauses += 1
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            self.waits.append(milliseconds)
+
+    page = FakePage()
+    monkeypatch.setattr("job_auto_agent.application.assist.time.monotonic", lambda: 100.0)
+
+    _wait_for_manual_review(page, review_deadline=400.0)
+
+    assert page.pauses == 0
+    assert page.waits == [300000]
+
+
+def test_playwright_inspector_requires_explicit_debug_setting(monkeypatch) -> None:
+    monkeypatch.delenv("DEBUG", raising=False)
+    monkeypatch.delenv("PWDEBUG", raising=False)
+    assert not _debug_inspector_enabled()
+
+    monkeypatch.setenv("DEBUG", "false")
+    monkeypatch.setenv("PWDEBUG", "0")
+    assert not _debug_inspector_enabled()
+
+    monkeypatch.setenv("PWDEBUG", "1")
+    assert _debug_inspector_enabled()
+
+
+def test_debug_review_opens_playwright_inspector() -> None:
+    class FakePage:
+        def __init__(self) -> None:
+            self.pauses = 0
+
+        def pause(self) -> None:
+            self.pauses += 1
+
+    page = FakePage()
+
+    _wait_for_manual_review(page, review_deadline=None, inspector_enabled=True)
+
+    assert page.pauses == 1
+
+
+def test_cli_review_wait_defaults_to_five_minutes(monkeypatch) -> None:
+    monkeypatch.delenv("JOB_AUTO_AGENT_ASSIST_REVIEW_SECONDS", raising=False)
+    assert _review_wait_seconds() == 300
+
+    monkeypatch.setenv("JOB_AUTO_AGENT_ASSIST_REVIEW_SECONDS", "invalid")
+    assert _review_wait_seconds() == 300
 
 
 def _write_profile(tmp_path: Path) -> Path:

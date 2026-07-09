@@ -50,6 +50,7 @@ class AssistApplyResult:
 
 
 BrowserDriver = Callable[[sqlite3.Row, ApplicationProfile, ApplicationPaths], str]
+DEFAULT_REVIEW_WAIT_SECONDS = 300
 
 
 def assist_apply_for_job(
@@ -200,14 +201,15 @@ def _run_playwright_assist(
                 if review_wait_seconds is not None
                 else _review_wait_seconds()
             )
-            review_deadline = (
-                time.monotonic() + wait_seconds
-                if wait_seconds is not None
-                else None
-            )
+            inspector_enabled = _debug_inspector_enabled()
+            review_deadline = None if inspector_enabled else time.monotonic() + wait_seconds
             if ats_type == "LinkedIn Easy Apply" and _linkedin_login_required(page):
                 print("Please login manually and continue in the browser.", flush=True)
-                _wait_for_linkedin_login(page, review_deadline)
+                _wait_for_linkedin_login(
+                    page,
+                    review_deadline,
+                    inspector_enabled=inspector_enabled,
+                )
             linkedin_login_pending = (
                 ats_type == "LinkedIn Easy Apply" and _linkedin_login_required(page)
             )
@@ -221,11 +223,11 @@ def _run_playwright_assist(
                 "if everything looks correct.",
                 flush=True,
             )
-            if review_deadline is None:
-                page.pause()
-            else:
-                remaining_seconds = max(0, review_deadline - time.monotonic())
-                page.wait_for_timeout(round(remaining_seconds * 1000))
+            _wait_for_manual_review(
+                page,
+                review_deadline,
+                inspector_enabled=inspector_enabled,
+            )
             browser.close()
     except PlaywrightError as exc:
         raise AssistApplyError(
@@ -365,14 +367,25 @@ def _bool_text(value: Any) -> str | None:
     return str(value)
 
 
-def _review_wait_seconds() -> int | None:
+def _review_wait_seconds() -> int:
     raw_value = os.getenv("JOB_AUTO_AGENT_ASSIST_REVIEW_SECONDS")
     if raw_value is None:
-        return None
+        return DEFAULT_REVIEW_WAIT_SECONDS
     try:
         return max(0, int(raw_value))
     except ValueError:
-        return None
+        return DEFAULT_REVIEW_WAIT_SECONDS
+
+
+def _debug_inspector_enabled() -> bool:
+    return any(_truthy_env_value(os.getenv(name)) for name in ("DEBUG", "PWDEBUG"))
+
+
+def _truthy_env_value(value: str | None) -> bool:
+    if value is None:
+        return False
+    normalized = value.strip().lower()
+    return bool(normalized) and normalized not in {"0", "false", "no", "off"}
 
 
 def _linkedin_login_required(page: Any) -> bool:
@@ -386,12 +399,32 @@ def _linkedin_login_required(page: Any) -> bool:
         return False
 
 
-def _wait_for_linkedin_login(page: Any, review_deadline: float | None) -> None:
-    if review_deadline is None:
+def _wait_for_linkedin_login(
+    page: Any,
+    review_deadline: float | None,
+    inspector_enabled: bool = False,
+) -> None:
+    if inspector_enabled:
         page.pause()
+        return
+    if review_deadline is None:
         return
     while _linkedin_login_required(page):
         remaining_seconds = review_deadline - time.monotonic()
         if remaining_seconds <= 0:
             return
         page.wait_for_timeout(round(min(1.0, remaining_seconds) * 1000))
+
+
+def _wait_for_manual_review(
+    page: Any,
+    review_deadline: float | None,
+    inspector_enabled: bool = False,
+) -> None:
+    if inspector_enabled:
+        page.pause()
+        return
+    if review_deadline is None:
+        return
+    remaining_seconds = max(0, review_deadline - time.monotonic())
+    page.wait_for_timeout(round(remaining_seconds * 1000))
